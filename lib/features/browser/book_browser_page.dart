@@ -101,13 +101,16 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
           tooltip: 'Menu',
         ),
         actions: [
-          _buildViewModeTabs(appState),
           IconButton(
             icon: const Icon(Icons.link_off),
             onPressed: _disconnect,
             tooltip: 'Disconnect',
           ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(48),
+          child: _buildViewModeTabs(appState),
+        ),
       ),
       drawer: isWideScreen ? null : _buildDrawer(appState),
       body: isWideScreen
@@ -117,10 +120,11 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
   }
 
   Widget _buildViewModeTabs(AppState appState) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
         child: SegmentedButton<ViewMode>(
           segments: const [
             ButtonSegment<ViewMode>(
@@ -242,6 +246,8 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
           mainAxisSpacing: 8,
         ),
         itemCount: folders.length + (appState.hasMore ? 1 : 0),
+        addAutomaticKeepAlives: false,
+        addRepaintBoundaries: true,
         itemBuilder: (context, index) {
           if (index >= folders.length) {
             return const Center(child: CircularProgressIndicator());
@@ -310,7 +316,6 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
                 title: const Text('Remove from History'),
                 onTap: () {
                   Navigator.of(ctx).pop();
-                  // TODO: implement remove from history
                 },
               ),
             ],
@@ -403,7 +408,7 @@ class _DrawerTreeNodeState extends State<_DrawerTreeNode> {
   }
 }
 
-/// Folder card widget for grid display
+/// Folder card widget for grid display with memory-optimized images
 class _FolderCard extends StatelessWidget {
   final FolderInfo folder;
   final VoidCallback onTap;
@@ -431,12 +436,12 @@ class _FolderCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Cover image
             Expanded(
               child: coverUrl != null
                   ? CachedNetworkImage(
                       imageUrl: coverUrl,
                       fit: BoxFit.cover,
+                      memCacheWidth: 200,
                       placeholder: (_, __) => Container(
                         color: Colors.grey[200],
                         child: const Center(
@@ -465,7 +470,6 @@ class _FolderCard extends StatelessWidget {
                       ),
                     ),
             ),
-            // Info section
             Container(
               padding: const EdgeInsets.all(6),
               child: Column(
