@@ -6,8 +6,8 @@ import '../../core/state/app_state.dart';
 import '../../core/models/folder_info.dart';
 import '../../core/models/file_info.dart';
 
-/// 漫画阅读器页面
-/// 支持左右滑动翻页、双指缩放、进度条
+/// Comic reader page with image preloading
+/// Supports swipe navigation, pinch-to-zoom, progress bar
 class ComicReaderPage extends StatefulWidget {
   final FolderInfo folder;
 
@@ -24,6 +24,12 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
   bool _isLoading = true;
   String? _errorMessage;
   bool _showControls = true;
+
+  /// Number of images to preload ahead of current page
+  static const int _preloadAhead = 3;
+
+  /// Number of images to preload behind current page
+  static const int _preloadBehind = 1;
 
   @override
   void initState() {
@@ -46,8 +52,15 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
     setState(() {
       _imageFiles = appState.files.where((f) => f.isImage).toList();
       _isLoading = false;
-      _errorMessage = _imageFiles.isEmpty ? '该文件夹中没有图片文件' : null;
+      _errorMessage = _imageFiles.isEmpty
+          ? 'No image files in this folder'
+          : null;
     });
+
+    // Preload first few images after initial load
+    if (_imageFiles.isNotEmpty) {
+      _preloadAround(0);
+    }
   }
 
   String _getImageUrl(int index) {
@@ -55,8 +68,47 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
     return appState.apiClient!.buildFileUrl(_imageFiles[index].fullPath);
   }
 
+  /// Preload images around the given index
+  void _preloadAround(int index) {
+    if (!mounted || _imageFiles.isEmpty) return;
+
+    // Preload images ahead
+    for (
+      int i = index + 1;
+      i <= index + _preloadAhead && i < _imageFiles.length;
+      i++
+    ) {
+      final url = _getImageUrl(i);
+      precacheImage(CachedNetworkImageProvider(url), context);
+    }
+
+    // Preload images behind
+    for (int i = index - 1; i >= 0 && i >= index - _preloadBehind; i--) {
+      final url = _getImageUrl(i);
+      precacheImage(CachedNetworkImageProvider(url), context);
+    }
+  }
+
   void _toggleControls() {
     setState(() => _showControls = !_showControls);
+  }
+
+  void _goToNextPage() {
+    if (_currentPage < _imageFiles.length - 1) {
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
+
+  void _goToPreviousPage() {
+    if (_currentPage > 0) {
+      _pageController.previousPage(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
+      );
+    }
   }
 
   @override
@@ -65,13 +117,8 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // 主内容区域
           _buildContent(),
-
-          // 顶部控制栏
           if (_showControls) _buildTopBar(),
-
-          // 底部进度条
           if (_showControls && _imageFiles.isNotEmpty) _buildBottomBar(),
         ],
       ),
@@ -102,7 +149,7 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
                 });
                 _loadFiles();
               },
-              child: const Text('重试'),
+              child: const Text('Retry'),
             ),
           ],
         ),
@@ -110,12 +157,28 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
     }
 
     return GestureDetector(
-      onTap: _toggleControls,
+      onTapUp: (details) {
+        final screenWidth = MediaQuery.of(context).size.width;
+        final tapX = details.globalPosition.dx;
+        final third = screenWidth / 3;
+
+        if (tapX < third) {
+          // Left third: previous page
+          _goToPreviousPage();
+        } else if (tapX > third * 2) {
+          // Right third: next page
+          _goToNextPage();
+        } else {
+          // Center third: toggle controls
+          _toggleControls();
+        }
+      },
       child: PageView.builder(
         controller: _pageController,
         itemCount: _imageFiles.length,
         onPageChanged: (page) {
           setState(() => _currentPage = page);
+          _preloadAround(page);
         },
         itemBuilder: (context, index) {
           final imageUrl = _getImageUrl(index);
@@ -178,7 +241,6 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 进度条
               Row(
                 children: [
                   Text(
@@ -211,7 +273,6 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
                   ),
                 ],
               ),
-              // 文件名
               Text(
                 _imageFiles[_currentPage].name,
                 style: const TextStyle(color: Colors.white54, fontSize: 12),
@@ -226,7 +287,7 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
   }
 }
 
-/// 单页图片查看器（支持缩放）
+/// Single page image viewer with zoom support
 class _ImageViewer extends StatefulWidget {
   final String imageUrl;
   final String fileName;
@@ -273,15 +334,16 @@ class _ImageViewerState extends State<_ImageViewer> {
               CircularProgressIndicator(value: progress, color: Colors.white),
               const SizedBox(height: 16),
               Text(
-                progress != null ? '${(progress * 100).toInt()}%' : '加载中...',
+                progress != null
+                    ? '${(progress * 100).toInt()}%'
+                    : 'Loading...',
                 style: const TextStyle(color: Colors.white54),
               ),
             ],
           ),
         );
       },
-      errorBuilder: (_, _, _) {
-        // 延迟设置状态避免在构建中调用 setState
+      errorBuilder: (_, __, ___) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) setState(() => _hasError = true);
         });

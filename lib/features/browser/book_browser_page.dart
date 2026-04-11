@@ -122,38 +122,121 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
   }
 
   Widget _buildViewModeTabs(AppState appState) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isCompact = screenWidth < 600;
+
+    if (isCompact) {
+      // 小屏幕：只显示图标，等宽分布
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          children: [
+            _buildCompactTab(
+              icon: Icons.folder,
+              label: '本地目录',
+              isSelected: appState.viewMode == ViewMode.folders,
+              onTap: () => appState.setViewMode(ViewMode.folders),
+            ),
+            _buildCompactTab(
+              icon: Icons.favorite,
+              label: '我的收藏',
+              isSelected: appState.viewMode == ViewMode.favorites,
+              onTap: () => appState.setViewMode(ViewMode.favorites),
+            ),
+            _buildCompactTab(
+              icon: Icons.history,
+              label: '浏览历史',
+              isSelected: appState.viewMode == ViewMode.history,
+              onTap: () => appState.setViewMode(ViewMode.history),
+            ),
+            _buildCompactTab(
+              icon: Icons.download,
+              label: '最近下载',
+              isSelected: appState.viewMode == ViewMode.downloads,
+              onTap: () => appState.setViewMode(ViewMode.downloads),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 大屏幕：显示图标+文字
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SegmentedButton<ViewMode>(
-          segments: const [
-            ButtonSegment<ViewMode>(
-              value: ViewMode.folders,
-              label: Text('本地目录'),
-              // icon: Icon(Icons.folder),
-            ),
-            ButtonSegment<ViewMode>(
-              value: ViewMode.favorites,
-              label: Text('我的收藏'),
-              // icon: Icon(Icons.favorite),
-            ),
-            ButtonSegment<ViewMode>(
-              value: ViewMode.history,
-              label: Text('浏览历史'),
-              // icon: Icon(Icons.history),
-            ),
-            ButtonSegment<ViewMode>(
-              value: ViewMode.downloads,
-              label: Text('最近下载'),
-              // icon: Icon(Icons.download),
-            ),
-          ],
-          selected: {appState.viewMode},
-          onSelectionChanged: (mode) {
-            appState.setViewMode(mode.first);
-          },
+      child: SegmentedButton<ViewMode>(
+        segments: const [
+          ButtonSegment<ViewMode>(
+            value: ViewMode.folders,
+            label: Text('本地目录'),
+            icon: Icon(Icons.folder),
+          ),
+          ButtonSegment<ViewMode>(
+            value: ViewMode.favorites,
+            label: Text('我的收藏'),
+            icon: Icon(Icons.favorite),
+          ),
+          ButtonSegment<ViewMode>(
+            value: ViewMode.history,
+            label: Text('浏览历史'),
+            icon: Icon(Icons.history),
+          ),
+          ButtonSegment<ViewMode>(
+            value: ViewMode.downloads,
+            label: Text('最近下载'),
+            icon: Icon(Icons.download),
+          ),
+        ],
+        selected: {appState.viewMode},
+        onSelectionChanged: (mode) {
+          appState.setViewMode(mode.first);
+        },
+      ),
+    );
+  }
+
+  Widget _buildCompactTab({
+    required IconData icon,
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? Theme.of(context).colorScheme.secondaryContainer
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 20,
+                color: isSelected
+                    ? Theme.of(context).colorScheme.onSecondaryContainer
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: isSelected
+                      ? Theme.of(context).colorScheme.onSecondaryContainer
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
