@@ -16,6 +16,7 @@ class BookBrowserPage extends StatefulWidget {
 
 class _BookBrowserPageState extends State<BookBrowserPage> {
   final ScrollController _scrollController = ScrollController();
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   void initState() {
@@ -86,6 +87,7 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
     final isWideScreen = screenWidth >= 840;
 
     return Scaffold(
+      key: _scaffoldKey,
       appBar: AppBar(
         title: Text(appState.connectedServer?.name ?? 'Comic Reader'),
         centerTitle: true,
@@ -95,7 +97,7 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
             if (isWideScreen) {
               appState.toggleSidebar();
             } else {
-              Scaffold.of(context).openDrawer();
+              _scaffoldKey.currentState?.openDrawer();
             }
           },
           tooltip: 'Menu',
@@ -129,23 +131,23 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
           segments: const [
             ButtonSegment<ViewMode>(
               value: ViewMode.folders,
-              label: Text('Folders'),
-              icon: Icon(Icons.folder),
+              label: Text('本地目录'),
+              // icon: Icon(Icons.folder),
             ),
             ButtonSegment<ViewMode>(
               value: ViewMode.favorites,
-              label: Text('Favorites'),
-              icon: Icon(Icons.favorite),
+              label: Text('我的收藏'),
+              // icon: Icon(Icons.favorite),
             ),
             ButtonSegment<ViewMode>(
               value: ViewMode.history,
-              label: Text('History'),
-              icon: Icon(Icons.history),
+              label: Text('浏览历史'),
+              // icon: Icon(Icons.history),
             ),
             ButtonSegment<ViewMode>(
               value: ViewMode.downloads,
-              label: Text('Downloads'),
-              icon: Icon(Icons.download),
+              label: Text('最近下载'),
+              // icon: Icon(Icons.download),
             ),
           ],
           selected: {appState.viewMode},
