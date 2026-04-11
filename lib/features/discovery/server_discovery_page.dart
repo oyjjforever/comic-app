@@ -3,7 +3,10 @@ import 'package:provider/provider.dart';
 import '../../core/state/app_state.dart';
 import '../../core/models/server_info.dart';
 import '../../core/network/server_discovery.dart';
+import '../../core/services/update_service.dart';
 import '../browser/book_browser_page.dart';
+import '../settings/update_dialog.dart';
+import '../settings/settings_page.dart';
 
 /// 服务器发现与连接页面
 class ServerDiscoveryPage extends StatefulWidget {
@@ -26,6 +29,8 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
     // 自动开始扫描
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startScan();
+      // 启动时自动检测更新
+      _checkForUpdate();
     });
   }
 
@@ -39,6 +44,15 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
   void _startScan() {
     final appState = context.read<AppState>();
     appState.discovery.startScan();
+  }
+
+  /// 启动时自动检测更新（静默，有频率限制）
+  Future<void> _checkForUpdate() async {
+    final updateService = UpdateService();
+    final result = await updateService.checkForUpdate();
+    if (result.hasUpdate && result.release != null && mounted) {
+      UpdateDialog.show(context, release: result.release!);
+    }
   }
 
   Future<void> _connectToServer(ServerInfo server) async {
@@ -94,7 +108,21 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
     final discovery = appState.discovery;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Comic Reader'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('Comic Reader'),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              Navigator.of(
+                context,
+              ).push(MaterialPageRoute(builder: (_) => const SettingsPage()));
+            },
+            tooltip: '设置',
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
