@@ -39,6 +39,23 @@ android {
     }
 }
 
+// 自定义 APK 输出文件名：复制 app-release.apk 为 comic-app.apk
+afterEvaluate {
+    val copyTask = tasks.register("copyReleaseApk") {
+        doLast {
+            val buildDir = layout.buildDirectory.asFile.get()
+            val apkDir = File(buildDir, "outputs/flutter-apk")
+            val originalFile = File(apkDir, "app-release.apk")
+            val copiedFile = File(apkDir, "comic-app.apk")
+            if (originalFile.exists()) {
+                originalFile.copyTo(copiedFile, overwrite = true)
+                logger.lifecycle("APK copied: ${originalFile.name} -> ${copiedFile.name}")
+            }
+        }
+    }
+    tasks.findByName("assembleRelease")?.finalizedBy(copyTask)
+}
+
 flutter {
     source = "../.."
 }
