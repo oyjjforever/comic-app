@@ -4,7 +4,7 @@ import '../../core/state/app_state.dart';
 import '../../core/models/server_info.dart';
 import '../../core/network/server_discovery.dart';
 import '../../core/services/update_service.dart';
-import '../browser/book_browser_page.dart';
+import '../home/home_page.dart';
 import '../settings/update_dialog.dart';
 import '../settings/settings_page.dart';
 
@@ -60,7 +60,7 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
     final success = await appState.connectToServer(server);
     if (success && mounted) {
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const BookBrowserPage()),
+        MaterialPageRoute(builder: (_) => const HomePage()),
       );
     } else if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -90,7 +90,7 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
 
     if (success && mounted) {
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const BookBrowserPage()),
+        MaterialPageRoute(builder: (_) => const HomePage()),
       );
     } else if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

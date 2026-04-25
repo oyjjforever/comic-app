@@ -10,6 +10,9 @@ import '../network/server_discovery.dart';
 /// 视图模式
 enum ViewMode { folders, favorites, history, downloads }
 
+/// 视频视图模式
+enum VideoViewMode { folders, favorites, history }
+
 /// 应用全局状态管理
 class AppState extends ChangeNotifier {
   ServerInfo? _connectedServer;
@@ -48,6 +51,22 @@ class AppState extends ChangeNotifier {
   List<HistoryInfo> _downloadHistory = [];
   List<FolderInfo> _downloadHistoryFolders = [];
 
+  // 视频浏览状态
+  List<FolderInfo> _videoFolders = [];
+  List<FileInfo> _videoFiles = [];
+  List<FolderTreeNode> _videoTreeNodes = [];
+  String? _selectedVideoTreePath;
+  bool _isVideoTreeLoading = false;
+  VideoViewMode _videoViewMode = VideoViewMode.favorites;
+
+  // 视频收藏状态
+  List<FavoriteInfo> _videoFavorites = [];
+  List<FileInfo> _videoFavoriteFiles = [];
+
+  // 视频浏览历史状态
+  List<HistoryInfo> _videoBrowseHistory = [];
+  List<FileInfo> _videoBrowseHistoryFiles = [];
+
   // 侧边栏状态
   bool _isSidebarExpanded = true;
 
@@ -83,6 +102,18 @@ class AppState extends ChangeNotifier {
   List<HistoryInfo> get downloadHistory => _downloadHistory;
   List<FolderInfo> get downloadHistoryFolders => _downloadHistoryFolders;
 
+  // 视频 Getters
+  List<FolderInfo> get videoFolders => _videoFolders;
+  List<FileInfo> get videoFiles => _videoFiles;
+  List<FolderTreeNode> get videoTreeNodes => _videoTreeNodes;
+  String? get selectedVideoTreePath => _selectedVideoTreePath;
+  bool get isVideoTreeLoading => _isVideoTreeLoading;
+  VideoViewMode get videoViewMode => _videoViewMode;
+  List<FavoriteInfo> get videoFavorites => _videoFavorites;
+  List<FileInfo> get videoFavoriteFiles => _videoFavoriteFiles;
+  List<HistoryInfo> get videoBrowseHistory => _videoBrowseHistory;
+  List<FileInfo> get videoBrowseHistoryFiles => _videoBrowseHistoryFiles;
+
   // 侧边栏 Getter
   bool get isSidebarExpanded => _isSidebarExpanded;
 
@@ -96,7 +127,9 @@ class AppState extends ChangeNotifier {
       final client = ApiClient(baseUrl: server.baseUrl);
       final connected = await client.testConnection();
       if (connected) {
-        _connectedServer = server;
+        // 获取完整的服务器信息（包含 resourcePath、videoResourcePath 等）
+        final fullServerInfo = await client.getServerInfo();
+        _connectedServer = fullServerInfo ?? server;
         _apiClient = client;
         _isLoading = false;
         notifyListeners();
@@ -144,6 +177,14 @@ class AppState extends ChangeNotifier {
     _browseHistoryFolders = [];
     _downloadHistory = [];
     _downloadHistoryFolders = [];
+    _videoFolders = [];
+    _videoFiles = [];
+    _videoTreeNodes = [];
+    _selectedVideoTreePath = null;
+    _videoFavorites = [];
+    _videoFavoriteFiles = [];
+    _videoBrowseHistory = [];
+    _videoBrowseHistoryFiles = [];
     notifyListeners();
   }
 
@@ -503,6 +544,220 @@ class AppState extends ChangeNotifier {
   void clearError() {
     _errorMessage = null;
     notifyListeners();
+  }
+
+  // ==================== 视频浏览 ====================
+
+  /// 加载视频文件夹树的根节点
+  Future<void> loadVideoTreeRoot(String rootPath) async {
+    if (_apiClient == null) return;
+    _isVideoTreeLoading = true;
+    notifyListeners();
+
+    try {
+      final children = await _apiClient!.getFolderTree(path: rootPath);
+      _videoTreeNodes = children
+          .map(
+            (f) => FolderTreeNode(
+              name: f.name,
+              fullPath: f.fullPath,
+              isLeaf: f.isLeaf,
+              children: [],
+              isExpanded: false,
+              isLoading: false,
+            ),
+          )
+          .toList();
+      _isVideoTreeLoading = false;
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = '加载视频文件夹树失败: $e';
+      _isVideoTreeLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// 懒加载视频树子节点
+  Future<void> loadVideoTreeChildren(FolderTreeNode node) async {
+    if (_apiClient == null || node.isLoading || node.children.isNotEmpty)
+      return;
+    node.isLoading = true;
+    notifyListeners();
+
+    try {
+      final children = await _apiClient!.getFolderTree(path: node.fullPath);
+      node.children = children
+          .map(
+            (f) => FolderTreeNode(
+              name: f.name,
+              fullPath: f.fullPath,
+              isLeaf: f.isLeaf,
+              children: [],
+              isExpanded: false,
+              isLoading: false,
+            ),
+          )
+          .toList();
+      node.isLoading = false;
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = '加载子节点失败: $e';
+      node.isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// 选中视频树节点并加载视频文件
+  Future<void> selectVideoTreeNode(String fullPath) async {
+    _selectedVideoTreePath = fullPath;
+    _videoViewMode = VideoViewMode.folders;
+    notifyListeners();
+    await loadVideoFiles(fullPath);
+  }
+
+  /// 加载指定文件夹中的视频文件
+  Future<void> loadVideoFiles(String folderPath) async {
+    if (_apiClient == null) return;
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final allFiles = await _apiClient!.getFiles(folderPath);
+      _videoFiles = allFiles.where((f) => f.isVideo).toList();
+      _isLoading = false;
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = '加载视频文件失败: $e';
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// 设置视频视图模式
+  void setVideoViewMode(VideoViewMode mode) {
+    if (_videoViewMode == mode) return;
+    _videoViewMode = mode;
+    notifyListeners();
+    _loadVideoDataForMode(mode);
+  }
+
+  Future<void> _loadVideoDataForMode(VideoViewMode mode) async {
+    switch (mode) {
+      case VideoViewMode.folders:
+        if (_selectedVideoTreePath != null) {
+          await loadVideoFiles(_selectedVideoTreePath!);
+        }
+        break;
+      case VideoViewMode.favorites:
+        await loadVideoFavorites();
+        break;
+      case VideoViewMode.history:
+        await loadVideoBrowseHistory();
+        break;
+    }
+  }
+
+  // ==================== 视频收藏 ====================
+
+  /// 加载视频收藏列表
+  Future<void> loadVideoFavorites() async {
+    if (_apiClient == null) return;
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      _videoFavorites = await _apiClient!.getFavorites(module: 'video');
+      _videoFavoriteFiles = _videoFavorites.map((fav) {
+        final pathParts = fav.fullPath.split(RegExp(r'[/\\]'));
+        final name = pathParts.isNotEmpty ? pathParts.last : fav.fullPath;
+        final ext = name.contains('.') ? '.${name.split('.').last}' : '';
+        return FileInfo(
+          name: name,
+          fullPath: fav.fullPath,
+          extension: ext,
+          size: 0,
+          modifiedTime: '',
+        );
+      }).toList();
+      _isLoading = false;
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = '加载视频收藏失败: $e';
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// 切换视频收藏状态
+  Future<void> toggleVideoFavorite(String fullPath) async {
+    if (_apiClient == null) return;
+    try {
+      await _apiClient!.toggleFavorite(fullPath, 'video');
+      if (_videoViewMode == VideoViewMode.favorites) {
+        await loadVideoFavorites();
+      }
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = '切换收藏失败: $e';
+      notifyListeners();
+    }
+  }
+
+  /// 检查视频是否已收藏
+  Future<bool> isVideoFavorited(String fullPath) async {
+    if (_apiClient == null) return false;
+    try {
+      return await _apiClient!.isFavorited(fullPath, 'video');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ==================== 视频浏览历史 ====================
+
+  /// 加载视频浏览历史
+  Future<void> loadVideoBrowseHistory() async {
+    if (_apiClient == null) return;
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      _videoBrowseHistory = await _apiClient!.getBrowseHistory(
+        limit: 100,
+        module: 'video',
+      );
+      _videoBrowseHistoryFiles = _videoBrowseHistory.map((record) {
+        final pathParts = record.fullPath.split(RegExp(r'[/\\]'));
+        final name = pathParts.isNotEmpty ? pathParts.last : record.fullPath;
+        final ext = name.contains('.') ? '.${name.split('.').last}' : '';
+        return FileInfo(
+          name: name,
+          fullPath: record.fullPath,
+          extension: ext,
+          size: 0,
+          modifiedTime: '',
+        );
+      }).toList();
+      _isLoading = false;
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = '加载视频浏览历史失败: $e';
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// 记录视频浏览历史
+  Future<void> recordVideoBrowseHistory(String fullPath) async {
+    if (_apiClient == null) return;
+    try {
+      await _apiClient!.addBrowseHistory(fullPath, 'video');
+    } catch (_) {
+      // 静默处理记录失败
+    }
   }
 
   @override

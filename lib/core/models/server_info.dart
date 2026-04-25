@@ -6,6 +6,7 @@ class ServerInfo {
   final int port;
   final String version;
   final String resourcePath;
+  final String videoResourcePath;
 
   ServerInfo({
     required this.name,
@@ -14,6 +15,7 @@ class ServerInfo {
     required this.port,
     this.version = '1.0.0',
     this.resourcePath = '',
+    this.videoResourcePath = '',
   });
 
   /// 服务器基础 URL
@@ -42,6 +44,7 @@ class ServerInfo {
       port: json['port'] as int? ?? 9527,
       version: json['version'] as String? ?? '1.0.0',
       resourcePath: json['resourcePath'] as String? ?? '',
+      videoResourcePath: json['videoResourcePath'] as String? ?? '',
     );
   }
 

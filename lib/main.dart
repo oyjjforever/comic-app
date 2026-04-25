@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:media_kit/media_kit.dart';
 import 'core/state/app_state.dart';
 import 'features/discovery/server_discovery_page.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
   runApp(const ComicReaderApp());
 }
 

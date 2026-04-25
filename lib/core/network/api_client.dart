@@ -40,6 +40,7 @@ class ApiClient {
           port: parsedUri.port > 0 ? parsedUri.port : 9527,
           version: data['version'] as String? ?? '1.0.0',
           resourcePath: data['resourcePath'] as String? ?? '',
+          videoResourcePath: data['videoResourcePath'] as String? ?? '',
         );
       }
       return null;
