@@ -1,7 +1,9 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/state/app_state.dart';
 import '../../core/models/file_info.dart';
+import '../../core/services/video_thumbnail_service.dart';
 import 'video_player_page.dart';
 
 class VideoBrowserPage extends StatefulWidget {
@@ -652,8 +654,10 @@ class _SidebarTreeNodeState extends State<_SidebarTreeNode> {
   }
 }
 
-/// Video card widget for grid display
-class _VideoCard extends StatelessWidget {
+/// Video card widget for grid display with client-side thumbnail generation
+/// 类似 Electron 端 media-card.vue 的 getVideoThumbnail 方法，
+/// 使用原生平台 API 从视频 URL 提取帧作为缩略图
+class _VideoCard extends StatefulWidget {
   final FileInfo file;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
@@ -667,97 +671,160 @@ class _VideoCard extends StatelessWidget {
   });
 
   @override
+  State<_VideoCard> createState() => _VideoCardState();
+}
+
+class _VideoCardState extends State<_VideoCard> {
+  late Future<Uint8List?> _thumbnailFuture;
+
+  // 使用干净 URL（无查询参数），兼容 Android MediaMetadataRetriever
+  String get _videoUrl =>
+      '${widget.baseUrl}/api/videofile/${Uri.encodeComponent(widget.file.fullPath)}';
+
+  @override
+  void initState() {
+    super.initState();
+    _thumbnailFuture = VideoThumbnailService.instance.getThumbnail(_videoUrl);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: onTap,
-        onLongPress: onLongPress,
+        onTap: widget.onTap,
+        onLongPress: widget.onLongPress,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(
-              child: Container(
-                color: Colors.grey[850],
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // Video icon placeholder
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.play_circle_outline,
-                          size: 48,
-                          color: Colors.grey[400],
-                        ),
-                        const SizedBox(height: 4),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          child: Text(
-                            file.name,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey[400],
-                            ),
-                          ),
-                        ),
-                      ],
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Client-side generated video thumbnail
+                  FutureBuilder<Uint8List?>(
+                    future: _thumbnailFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return _buildPlaceholder();
+                      }
+                      if (snapshot.hasData && snapshot.data != null) {
+                        return Image.memory(
+                          snapshot.data!,
+                          fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                        );
+                      }
+                      return _buildPlaceholder();
+                    },
+                  ),
+                  // Play icon overlay
+                  Center(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      padding: const EdgeInsets.all(8),
+                      child: const Icon(
+                        Icons.play_arrow,
+                        size: 32,
+                        color: Colors.white,
+                      ),
                     ),
-                    // Extension badge
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          file.extension.toUpperCase(),
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
+                  ),
+                  // Extension badge
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        widget.file.extension.toUpperCase(),
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.all(8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    file.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    file.formattedSize,
-                    style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                  // File size badge
+                  Positioned(
+                    bottom: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        widget.file.formattedSize,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
             ),
+            Container(
+              padding: const EdgeInsets.all(8),
+              child: Text(
+                widget.file.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      color: Colors.grey[850],
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.play_circle_outline,
+            size: 48,
+            color: Colors.grey[400],
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              widget.file.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.grey[400],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
