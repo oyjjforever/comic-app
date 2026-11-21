@@ -443,10 +443,20 @@ class VideoThumbnailService {
   }
 
   /// 处理队列：为每个空闲 Player 分配任务
-  /// （首次调用时惰性初始化 Player 池）
+  /// （首次调用时惰性初始化 Player 池；初始化失败时清空队列，任务以 null 完成）
   Future<void> _processQueue() async {
     if (_queue.isEmpty) return;
-    await _ensureInitialized();
+    try {
+      await _ensureInitialized();
+    } catch (e) {
+      debugPrint('[VideoThumbnail] Player 池初始化失败，清空待处理队列: $e');
+      final jobs = List<_ThumbnailJob>.from(_queue);
+      _queue.clear();
+      for (final job in jobs) {
+        job.completer.complete(null);
+      }
+      return;
+    }
 
     while (_queue.isNotEmpty) {
       // 找一个空闲的 Player

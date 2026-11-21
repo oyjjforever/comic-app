@@ -26,6 +26,9 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
   StreamSubscription<ServerInfo>? _serverFoundSub;
   bool _handled = false;
 
+  /// 本轮扫描是否已结束（连接失败时区分"等待后续发现"与"直接失败"）
+  bool _scanDone = false;
+
   /// dispose 中不可使用 context，提前持有引用
   late final AppState _appState;
 
@@ -74,6 +77,7 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
 
   Future<void> _scanAndConnect(AppState appState) async {
     setState(() => _phase = _ConnectPhase.scanning);
+    _scanDone = false;
 
     _serverFoundSub?.cancel();
     _serverFoundSub = appState.discovery.onServerFound.listen((server) {
@@ -83,8 +87,10 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
     });
 
     await appState.discovery.startScan();
+    _scanDone = true;
 
     // 扫描结束仍未连接成功 → 显示失败态
+    // （若正在连接最后发现的服务器，由 _connectToServer 的失败分支兜底）
     if (mounted && !_handled) {
       setState(() => _phase = _ConnectPhase.failed);
     }
@@ -101,10 +107,13 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
     if (success) {
       appState.discovery.stopScan();
       _enterHome();
-    } else if (mounted && !_handled) {
-      // 该服务器连接失败，继续等扫描结果
+    } else if (mounted) {
+      // 该服务器连接失败：扫描仍在进行则等待后续发现的服务器，
+      // 扫描已结束则直接进入失败态（避免卡在"正在扫描"）
       _handled = false;
-      if (mounted) setState(() => _phase = _ConnectPhase.scanning);
+      setState(() {
+        _phase = _scanDone ? _ConnectPhase.failed : _ConnectPhase.scanning;
+      });
     }
   }
 
