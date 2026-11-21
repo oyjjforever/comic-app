@@ -100,6 +100,8 @@ class _FolderTreeViewState extends State<FolderTreeView> {
 
   /// 选中节点并加载内容
   void _onSelect(FolderTreeNode node) {
+    // "已收藏"虚拟分组节点：只展开/收起，不进入目录（与 Electron 端一致）
+    if (node.fullPath == AppState.bookmarkGroupKey) return;
     context.read<AppState>().selectTreeNode(node.fullPath);
     widget.onNodeSelected?.call();
   }
@@ -223,7 +225,23 @@ class _TreeNodeItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final isSelected = selectedPath == node.fullPath;
     final hasChildren = !node.isLeaf;
-    final folderIcon = isVideo ? Icons.videocam : Icons.folder;
+
+    // 节点图标：收藏分组=书签；分组内收藏节点=书签；其余=文件夹/视频
+    final IconData nodeIcon;
+    if (node.isBookmarkGroup) {
+      nodeIcon = Icons.bookmarks;
+    } else if (node.isBookmarked) {
+      nodeIcon = Icons.bookmark;
+    } else {
+      nodeIcon = hasChildren && node.isExpanded
+          ? Icons.folder_open
+          : (isVideo ? Icons.videocam : Icons.folder);
+    }
+    final Color iconColor = isSelected
+        ? AppColors.accent
+        : (node.isBookmarkGroup || node.isBookmarked
+              ? AppColors.accent
+              : AppColors.textSecondary);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -273,15 +291,7 @@ class _TreeNodeItem extends StatelessWidget {
                   else
                     const SizedBox(width: 18),
                   const SizedBox(width: 6),
-                  Icon(
-                    hasChildren && node.isExpanded
-                        ? Icons.folder_open
-                        : folderIcon,
-                    size: 16,
-                    color: isSelected
-                        ? AppColors.accent
-                        : AppColors.textSecondary,
-                  ),
+                  Icon(nodeIcon, size: 16, color: iconColor),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -291,7 +301,8 @@ class _TreeNodeItem extends StatelessWidget {
                         color: isSelected
                             ? AppColors.accent
                             : AppColors.textPrimary,
-                        fontWeight: isSelected
+                        fontWeight:
+                            isSelected || node.isBookmarkGroup
                             ? FontWeight.w600
                             : FontWeight.normal,
                       ),

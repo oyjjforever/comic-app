@@ -20,6 +20,9 @@ class AppState extends ChangeNotifier {
   static const String _lastServerIpKey = 'last_server_ip';
   static const String _lastServerPortKey = 'last_server_port';
 
+  /// 树顶"已收藏"虚拟分组节点的 fullPath（与 Electron 端 __bookmarked_group__ 一致）
+  static const String bookmarkGroupKey = '__bookmarked_group__';
+
   ServerInfo? _connectedServer;
   ApiClient? _apiClient;
   final ServerDiscovery _discovery = ServerDiscovery();
@@ -253,7 +256,45 @@ class AppState extends ChangeNotifier {
         .where((p) => p.isNotEmpty)
         .map((p) => FolderTreeNode(name: _pathBasename(p), fullPath: p, isLeaf: false))
         .toList();
+    _rebuildBookmarkGroup();
     notifyListeners();
+  }
+
+  /// 重建树顶"已收藏"虚拟分组（收藏目录汇总，与 Electron 端一致）
+  void _rebuildBookmarkGroup() {
+    _treeNodes.removeWhere((n) => n.fullPath == bookmarkGroupKey);
+    if (_favorites.isEmpty) return;
+
+    final group = FolderTreeNode(
+      name: '已收藏',
+      fullPath: bookmarkGroupKey,
+      isLeaf: false,
+      isExpanded: true,
+      isBookmarkGroup: true,
+      children: _favorites
+          .where((f) => f.fullPath.isNotEmpty)
+          .map(
+            (f) => FolderTreeNode(
+              name: _pathBasename(f.fullPath),
+              fullPath: f.fullPath,
+              isLeaf: false,
+              isBookmarked: true,
+            ),
+          )
+          .toList(),
+    );
+    _treeNodes.insert(0, group);
+  }
+
+  /// 轻量刷新收藏路径列表（仅拉收藏表，重建树分组；不拉每项详情）
+  Future<void> _refreshFavoritePaths() async {
+    if (_apiClient == null) return;
+    try {
+      _favorites = await _apiClient!.getFavorites(module: 'book');
+      _rebuildBookmarkGroup();
+    } catch (_) {
+      // 刷新失败保持现状
+    }
   }
 
   /// 提取路径最后一段作为名称（兼容 / 与 \）
@@ -410,6 +451,7 @@ class AppState extends ChangeNotifier {
           }
         },
       );
+      _rebuildBookmarkGroup();
       _isLoading = false;
       notifyListeners();
     } catch (e) {
@@ -424,11 +466,13 @@ class AppState extends ChangeNotifier {
     if (_apiClient == null) return;
     try {
       await _apiClient!.toggleFavorite(fullPath, 'book');
-      // 刷新收藏列表
+      // 刷新收藏列表（含树顶"已收藏"分组）
       if (_viewMode == ViewMode.favorites) {
         await loadFavorites();
+      } else {
+        await _refreshFavoritePaths();
+        notifyListeners();
       }
-      notifyListeners();
     } catch (e) {
       _errorMessage = '切换收藏失败: $e';
       notifyListeners();
@@ -798,6 +842,12 @@ class FolderTreeNode {
   final String name;
   final String fullPath;
   final bool isLeaf;
+
+  /// 树顶"已收藏"虚拟分组节点
+  final bool isBookmarkGroup;
+
+  /// 已收藏的目录（分组内节点显示书签图标）
+  final bool isBookmarked;
   List<FolderTreeNode> children;
   bool isExpanded;
   bool isLoading;
@@ -806,6 +856,8 @@ class FolderTreeNode {
     required this.name,
     required this.fullPath,
     this.isLeaf = true,
+    this.isBookmarkGroup = false,
+    this.isBookmarked = false,
     this.children = const [],
     this.isExpanded = false,
     this.isLoading = false,
