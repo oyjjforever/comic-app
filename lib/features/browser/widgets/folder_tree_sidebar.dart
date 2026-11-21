@@ -71,16 +71,17 @@ class _FolderTreeViewState extends State<FolderTreeView> {
                 )
               : ListView.builder(
                   padding: const EdgeInsets.only(top: 4, bottom: 8),
-                  itemCount: nodes.length,
-                  itemBuilder: (context, index) {
-                    return _TreeNodeItem(
-                      node: nodes[index],
-                      level: 0,
-                      selectedPath: appState.selectedTreePath,
-                      onExpandToggle: _onExpandToggle,
-                      onSelect: _onSelect,
-                    );
-                  },
+              itemCount: nodes.length,
+              itemBuilder: (context, index) {
+                return _TreeNodeItem(
+                  node: nodes[index],
+                  level: 0,
+                  selectedPath: appState.selectedTreePath,
+                  onExpandToggle: _onExpandToggle,
+                  onSelect: _onSelect,
+                  onLongPress: _onLongPress,
+                );
+              },
                 ),
         ),
       ],
@@ -104,6 +105,55 @@ class _FolderTreeViewState extends State<FolderTreeView> {
     if (node.fullPath == AppState.bookmarkGroupKey) return;
     context.read<AppState>().selectTreeNode(node.fullPath);
     widget.onNodeSelected?.call();
+  }
+
+  /// 长按树节点：目录收藏菜单（folder tag）
+  void _onLongPress(FolderTreeNode node) {
+    // 虚拟分组根节点无菜单（与 Electron 端一致）
+    if (node.fullPath == AppState.bookmarkGroupKey) return;
+    final appState = context.read<AppState>();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surfaceHigh,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  node.name,
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              ListTile(
+                leading: Icon(
+                  node.isBookmarked ? Icons.bookmark_remove_outlined : Icons.bookmark_add_outlined,
+                ),
+                title: Text(node.isBookmarked ? '取消收藏' : '添加到收藏'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await appState.toggleFolderTag(
+                    node.fullPath,
+                    node.name,
+                    isVideo: false,
+                  );
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 }
 
@@ -166,17 +216,18 @@ class _VideoFolderTreeViewState extends State<VideoFolderTreeView> {
                 )
               : ListView.builder(
                   padding: const EdgeInsets.only(top: 4, bottom: 8),
-                  itemCount: nodes.length,
-                  itemBuilder: (context, index) {
-                    return _TreeNodeItem(
-                      node: nodes[index],
-                      level: 0,
-                      selectedPath: appState.selectedVideoTreePath,
-                      onExpandToggle: _onExpandToggle,
-                      onSelect: _onSelect,
-                      isVideo: true,
-                    );
-                  },
+              itemCount: nodes.length,
+              itemBuilder: (context, index) {
+                return _TreeNodeItem(
+                  node: nodes[index],
+                  level: 0,
+                  selectedPath: appState.selectedVideoTreePath,
+                  onExpandToggle: _onExpandToggle,
+                  onSelect: _onSelect,
+                  onLongPress: _onLongPress,
+                  isVideo: true,
+                );
+              },
                 ),
         ),
       ],
@@ -196,14 +247,65 @@ class _VideoFolderTreeViewState extends State<VideoFolderTreeView> {
 
   /// 选中节点并加载内容
   void _onSelect(FolderTreeNode node) {
+    // "已收藏"虚拟分组节点：只展开/收起，不进入目录（与 Electron 端一致）
+    if (node.fullPath == AppState.bookmarkGroupKey) return;
     context.read<AppState>().selectVideoTreeNode(node.fullPath);
     widget.onNodeSelected?.call();
+  }
+
+  /// 长按树节点：目录收藏菜单（folder tag）
+  void _onLongPress(FolderTreeNode node) {
+    // 虚拟分组根节点无菜单（与 Electron 端一致）
+    if (node.fullPath == AppState.bookmarkGroupKey) return;
+    final appState = context.read<AppState>();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surfaceHigh,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  node.name,
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              ListTile(
+                leading: Icon(
+                  node.isBookmarked ? Icons.bookmark_remove_outlined : Icons.bookmark_add_outlined,
+                ),
+                title: Text(node.isBookmarked ? '取消收藏' : '添加到收藏'),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await appState.toggleFolderTag(
+                    node.fullPath,
+                    node.name,
+                    isVideo: true,
+                  );
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 }
 
 /// 树节点行（含递归子节点）
 /// - 箭头区域：仅展开/收起
-/// - 行其余区域：选中节点
+/// - 行其余区域：选中节点；长按弹目录收藏菜单
 class _TreeNodeItem extends StatelessWidget {
   const _TreeNodeItem({
     required this.node,
@@ -211,6 +313,7 @@ class _TreeNodeItem extends StatelessWidget {
     required this.selectedPath,
     required this.onExpandToggle,
     required this.onSelect,
+    required this.onLongPress,
     this.isVideo = false,
   });
 
@@ -219,6 +322,7 @@ class _TreeNodeItem extends StatelessWidget {
   final String? selectedPath;
   final void Function(FolderTreeNode node) onExpandToggle;
   final void Function(FolderTreeNode node) onSelect;
+  final void Function(FolderTreeNode node) onLongPress;
   final bool isVideo;
 
   @override
@@ -251,6 +355,7 @@ class _TreeNodeItem extends StatelessWidget {
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
             onTap: () => onSelect(node),
+            onLongPress: () => onLongPress(node),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
               decoration: BoxDecoration(
@@ -323,6 +428,7 @@ class _TreeNodeItem extends StatelessWidget {
               selectedPath: selectedPath,
               onExpandToggle: onExpandToggle,
               onSelect: onSelect,
+              onLongPress: onLongPress,
               isVideo: isVideo,
             ),
           ),

@@ -4,6 +4,7 @@ import '../models/server_info.dart';
 import '../models/folder_info.dart';
 import '../models/file_info.dart';
 import '../models/favorite_info.dart';
+import '../models/folder_tag.dart';
 import '../models/history_info.dart';
 import '../network/api_client.dart';
 import '../network/server_discovery.dart';
@@ -49,6 +50,10 @@ class AppState extends ChangeNotifier {
   // 收藏状态
   List<FavoriteInfo> _favorites = [];
   List<FolderInfo> _favoriteFolders = [];
+
+  // 目录收藏（folder tags，树顶"已收藏"分组数据源）
+  List<FolderTag> _bookFolderTags = [];
+  List<FolderTag> _videoFolderTags = [];
 
   // 浏览历史状态
   List<HistoryInfo> _browseHistory = [];
@@ -198,6 +203,8 @@ class AppState extends ChangeNotifier {
     _selectedTreePath = null;
     _favorites = [];
     _favoriteFolders = [];
+    _bookFolderTags = [];
+    _videoFolderTags = [];
     _browseHistory = [];
     _browseHistoryFolders = [];
     _downloadHistory = [];
@@ -256,44 +263,102 @@ class AppState extends ChangeNotifier {
         .where((p) => p.isNotEmpty)
         .map((p) => FolderTreeNode(name: _pathBasename(p), fullPath: p, isLeaf: false))
         .toList();
-    _rebuildBookmarkGroup();
+    _rebuildBookmarkGroups();
     notifyListeners();
   }
 
-  /// 重建树顶"已收藏"虚拟分组（收藏目录汇总，与 Electron 端一致）
-  void _rebuildBookmarkGroup() {
+  /// 重建树顶"已收藏"虚拟分组（folder tags，与 Electron 端一致）
+  void _rebuildBookmarkGroups() {
+    // 漫画树
     _treeNodes.removeWhere((n) => n.fullPath == bookmarkGroupKey);
-    if (_favorites.isEmpty) return;
+    if (_bookFolderTags.isNotEmpty) {
+      _treeNodes.insert(
+        0,
+        FolderTreeNode(
+          name: '已收藏',
+          fullPath: bookmarkGroupKey,
+          isLeaf: false,
+          isExpanded: true,
+          isBookmarkGroup: true,
+          children: _bookFolderTags
+              .where((t) => t.folderPath.isNotEmpty)
+              .map(
+                (t) => FolderTreeNode(
+                  name: _pathBasename(t.folderPath),
+                  fullPath: t.folderPath,
+                  isLeaf: false,
+                  isBookmarked: true,
+                ),
+              )
+              .toList(),
+        ),
+      );
+    }
 
-    final group = FolderTreeNode(
-      name: '已收藏',
-      fullPath: bookmarkGroupKey,
-      isLeaf: false,
-      isExpanded: true,
-      isBookmarkGroup: true,
-      children: _favorites
-          .where((f) => f.fullPath.isNotEmpty)
-          .map(
-            (f) => FolderTreeNode(
-              name: _pathBasename(f.fullPath),
-              fullPath: f.fullPath,
-              isLeaf: false,
-              isBookmarked: true,
-            ),
-          )
-          .toList(),
-    );
-    _treeNodes.insert(0, group);
+    // 视频树
+    _videoTreeNodes.removeWhere((n) => n.fullPath == bookmarkGroupKey);
+    if (_videoFolderTags.isNotEmpty) {
+      _videoTreeNodes.insert(
+        0,
+        FolderTreeNode(
+          name: '已收藏',
+          fullPath: bookmarkGroupKey,
+          isLeaf: false,
+          isExpanded: true,
+          isBookmarkGroup: true,
+          children: _videoFolderTags
+              .where((t) => t.folderPath.isNotEmpty)
+              .map(
+                (t) => FolderTreeNode(
+                  name: _pathBasename(t.folderPath),
+                  fullPath: t.folderPath,
+                  isLeaf: false,
+                  isBookmarked: true,
+                ),
+              )
+              .toList(),
+        ),
+      );
+    }
   }
 
-  /// 轻量刷新收藏路径列表（仅拉收藏表，重建树分组；不拉每项详情）
-  Future<void> _refreshFavoritePaths() async {
+  /// 加载目录收藏（两个模块并行），重建两棵树的分组
+  Future<void> loadFolderTags() async {
     if (_apiClient == null) return;
     try {
-      _favorites = await _apiClient!.getFavorites(module: 'book');
-      _rebuildBookmarkGroup();
-    } catch (_) {
-      // 刷新失败保持现状
+      final results = await Future.wait([
+        _apiClient!.getFolderTags(module: 'book'),
+        _apiClient!.getFolderTags(module: 'video'),
+      ]);
+      _bookFolderTags = results[0];
+      _videoFolderTags = results[1];
+      _rebuildBookmarkGroups();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('加载目录收藏失败: $e');
+    }
+  }
+
+  /// 切换树节点目录收藏（folder tag）
+  Future<void> toggleFolderTag(
+    String folderPath,
+    String name, {
+    required bool isVideo,
+  }) async {
+    if (_apiClient == null) return;
+    final module = isVideo ? 'video' : 'book';
+    final tags = isVideo ? _videoFolderTags : _bookFolderTags;
+    final isTagged = tags.any((t) => t.folderPath == folderPath);
+    try {
+      if (isTagged) {
+        await _apiClient!.deleteFolderTag(folderPath, module);
+      } else {
+        await _apiClient!.addFolderTag(name, folderPath, module);
+      }
+      await loadFolderTags();
+    } catch (e) {
+      _errorMessage = '切换目录收藏失败: $e';
+      notifyListeners();
     }
   }
 
@@ -326,11 +391,32 @@ class AppState extends ChangeNotifier {
           )
           .toList();
       node.isLoading = false;
+      // 批量标记目录收藏状态（树节点书签图标，与 Electron 端 isFolderTagged 一致）
+      await _markChildrenBookmarked(node.children, isVideo: false);
       notifyListeners();
     } catch (e) {
       _errorMessage = '加载子节点失败: $e';
       node.isLoading = false;
       notifyListeners();
+    }
+  }
+
+  /// 批量标记子节点的目录收藏状态
+  Future<void> _markChildrenBookmarked(
+    List<FolderTreeNode> children, {
+    required bool isVideo,
+  }) async {
+    if (_apiClient == null || children.isEmpty) return;
+    try {
+      final tagged = await _apiClient!.checkFolderTags(
+        children.map((c) => c.fullPath).toList(),
+        isVideo ? 'video' : 'book',
+      );
+      for (final child in children) {
+        child.isBookmarked = tagged[child.fullPath] ?? false;
+      }
+    } catch (_) {
+      // 标记失败不影响浏览
     }
   }
 
@@ -451,7 +537,6 @@ class AppState extends ChangeNotifier {
           }
         },
       );
-      _rebuildBookmarkGroup();
       _isLoading = false;
       notifyListeners();
     } catch (e) {
@@ -466,13 +551,11 @@ class AppState extends ChangeNotifier {
     if (_apiClient == null) return;
     try {
       await _apiClient!.toggleFavorite(fullPath, 'book');
-      // 刷新收藏列表（含树顶"已收藏"分组）
+      // 刷新收藏列表
       if (_viewMode == ViewMode.favorites) {
         await loadFavorites();
-      } else {
-        await _refreshFavoritePaths();
-        notifyListeners();
       }
+      notifyListeners();
     } catch (e) {
       _errorMessage = '切换收藏失败: $e';
       notifyListeners();
@@ -639,6 +722,7 @@ class AppState extends ChangeNotifier {
         .where((p) => p.isNotEmpty)
         .map((p) => FolderTreeNode(name: _pathBasename(p), fullPath: p, isLeaf: false))
         .toList();
+    _rebuildBookmarkGroups();
     notifyListeners();
   }
 
@@ -669,6 +753,7 @@ class AppState extends ChangeNotifier {
           )
           .toList();
       node.isLoading = false;
+      await _markChildrenBookmarked(node.children, isVideo: true);
       notifyListeners();
     } catch (e) {
       _errorMessage = '加载子节点失败: $e';
@@ -846,8 +931,8 @@ class FolderTreeNode {
   /// 树顶"已收藏"虚拟分组节点
   final bool isBookmarkGroup;
 
-  /// 已收藏的目录（分组内节点显示书签图标）
-  final bool isBookmarked;
+  /// 已收藏的目录（分组内节点显示书签图标；树子节点批量标记后更新）
+  bool isBookmarked;
   List<FolderTreeNode> children;
   bool isExpanded;
   bool isLoading;

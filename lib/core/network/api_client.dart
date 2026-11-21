@@ -4,6 +4,7 @@ import '../models/folder_info.dart';
 import '../models/file_info.dart';
 import '../models/server_info.dart';
 import '../models/favorite_info.dart';
+import '../models/folder_tag.dart';
 import '../models/history_info.dart';
 
 /// HTTP API 客户端 - 与 Electron 端 HTTP 服务通信
@@ -233,6 +234,68 @@ class ApiClient {
     );
     final response = await _httpClient.delete(uri);
     _checkResponse(response);
+  }
+
+  // ==================== 目录收藏（folder tags）相关 ====================
+
+  /// 获取目录收藏列表（树顶"已收藏"分组数据源）
+  Future<List<FolderTag>> getFolderTags({required String module}) async {
+    final uri = Uri.parse(
+      '$baseUrl/api/tags/folders?module=${Uri.encodeComponent(module)}',
+    );
+    final response = await _httpClient.get(uri);
+    _checkResponse(response);
+    final data = _parseJson(response.body);
+    final tags = data['tags'] as List<dynamic>? ?? [];
+    return tags
+        .map((t) => FolderTag.fromJson(t as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 添加目录收藏
+  Future<void> addFolderTag(
+    String label,
+    String folderPath,
+    String module,
+  ) async {
+    final uri = Uri.parse('$baseUrl/api/tags/folders');
+    final response = await _httpClient.post(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'label': label,
+        'folderPath': folderPath,
+        'module': module,
+      }),
+    );
+    _checkResponse(response);
+  }
+
+  /// 按路径取消目录收藏
+  Future<void> deleteFolderTag(String folderPath, String module) async {
+    final uri = Uri.parse(
+      '$baseUrl/api/tags/folders?folderPath=${Uri.encodeComponent(folderPath)}&module=${Uri.encodeComponent(module)}',
+    );
+    final response = await _httpClient.delete(uri);
+    _checkResponse(response);
+  }
+
+  /// 批量检查目录收藏状态（树节点书签标记）
+  Future<Map<String, bool>> checkFolderTags(
+    List<String> paths,
+    String module,
+  ) async {
+    if (paths.isEmpty) return {};
+    final uri = Uri.parse('$baseUrl/api/tags/folders/check-batch');
+    final response = await _httpClient.post(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'paths': paths, 'module': module}),
+    );
+    _checkResponse(response);
+    final data = _parseJson(response.body);
+    final tagged = data['tagged'] as Map<String, dynamic>? ?? {};
+    return tagged.map((k, v) => MapEntry(k, v as bool));
   }
 
   // ==================== 浏览历史相关 ====================

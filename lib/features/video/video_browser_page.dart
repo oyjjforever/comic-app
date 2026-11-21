@@ -47,6 +47,8 @@ class _VideoBrowserPageState extends State<VideoBrowserPage> {
     final videoPaths = appState.connectedServer?.effectiveVideoResourcePaths ??
         const <String>[];
     appState.loadVideoTreeRoot(videoPaths);
+    // 目录收藏（树顶"已收藏"分组）
+    await appState.loadFolderTags();
     await appState.loadVideoFavorites();
   }
 

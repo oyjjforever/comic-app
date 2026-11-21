@@ -48,6 +48,8 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
     final paths = appState.connectedServer?.effectiveResourcePaths ??
         const <String>[];
     appState.loadTreeRoot(paths);
+    // 目录收藏（树顶"已收藏"分组）
+    await appState.loadFolderTags();
     await appState.loadFavorites();
   }
 
