@@ -19,12 +19,16 @@ class VideoThumbnail {
   /// 封面来源是否为服务器（服务器封面可能是用户自定义帧，优先级高于本地生成）
   final bool fromServer;
 
+  /// 服务器封面文件的 Last-Modified（用于 304 条件校验封面是否已更换）
+  final String? lastModified;
+
   const VideoThumbnail({
     this.bytes,
     this.width,
     this.height,
     this.durationSeconds,
     this.fromServer = false,
+    this.lastModified,
   });
 
   bool get hasMeta => width != null && height != null;
@@ -66,6 +70,7 @@ class VideoThumbnail {
         if (height != null) 'h': height,
         if (durationSeconds != null) 'd': durationSeconds,
         if (fromServer) 'src': 'server',
+        if (lastModified != null) 'lm': lastModified,
       };
 
   static VideoThumbnail? fromMetaJson(Map<String, dynamic> json) {
@@ -73,12 +78,14 @@ class VideoThumbnail {
     final h = json['h'] as int?;
     final d = (json['d'] as num?)?.toDouble();
     final fromServer = json['src'] == 'server';
+    final lm = json['lm'] as String?;
     if (w == null && h == null && d == null && !fromServer) return null;
     return VideoThumbnail(
       width: w,
       height: h,
       durationSeconds: d,
       fromServer: fromServer,
+      lastModified: lm,
     );
   }
 }
@@ -115,6 +122,12 @@ class VideoThumbnailService {
   // 服务器封面接口支持状态（null=未探测，true=支持，false=不支持/旧服务器）
   bool? _serverCoverSupported;
 
+  // 本会话已完成封面 304 校验的 URL（每会话一次，检测自定义帧更换）
+  final Set<String> _sessionValidated = {};
+
+  // 缓存键版本盐：封面策略变更时使旧客户端缓存整体失效
+  static const String _cacheKeyVersion = 'v2';
+
   // 磁盘缓存目录（惰性初始化）
   static const String _coverDirName = 'video-covers';
   Directory? _coverDir;
@@ -123,6 +136,7 @@ class VideoThumbnailService {
   /// 重置服务器封面接口探测状态（重连服务器后调用）
   void resetServerCoverSupport() {
     _serverCoverSupported = null;
+    _sessionValidated.clear();
   }
 
   /// 获取磁盘缓存目录
@@ -151,9 +165,9 @@ class VideoThumbnailService {
     return _coverDir;
   }
 
-  /// 根据视频 URL 生成稳定的缓存文件基名（md5，与 Electron 端方案一致）
+  /// 根据视频 URL 生成稳定的缓存文件基名（md5 + 版本盐）
   String _cacheKey(String videoUrl) =>
-      md5.convert(utf8.encode(videoUrl)).toString();
+      md5.convert(utf8.encode('$videoUrl|$_cacheKeyVersion')).toString();
 
   File _coverFile(String dirPath, String videoUrl) =>
       File('$dirPath${Platform.pathSeparator}${_cacheKey(videoUrl)}.jpg');
@@ -266,11 +280,20 @@ class VideoThumbnailService {
 
   /// 请求服务器封面接口
   /// 响应头带 X-Video-Width/Height/Duration（ffprobe 元数据）
+  /// [ifModifiedSince] 提供时为条件请求：封面未变化服务器返回 304
   /// 返回 (结果, HTTP 状态码)；网络异常返回 null
-  Future<(VideoThumbnail?, int)?> _fetchServerCover(String coverUrl) async {
+  Future<(VideoThumbnail?, int)?> _fetchServerCover(
+    String coverUrl, {
+    String? ifModifiedSince,
+  }) async {
     try {
       final response = await http
-          .get(Uri.parse(coverUrl))
+          .get(
+            Uri.parse(coverUrl),
+            headers: {
+              'If-Modified-Since': ?ifModifiedSince,
+            },
+          )
           .timeout(_serverCoverTimeout);
       if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
         int? parseInt(String name) =>
@@ -283,6 +306,7 @@ class VideoThumbnailService {
           height: parseInt('x-video-height'),
           durationSeconds: duration != null && duration > 0 ? duration : null,
           fromServer: true,
+          lastModified: response.headers['last-modified'],
         );
         return (thumb, 200);
       }
@@ -313,14 +337,14 @@ class VideoThumbnailService {
     // 3. 检查磁盘缓存（已生成的封面直接复用，避免重新解码视频）
     final cachedDisk = await _readDiskCache(videoUrl);
     if (cachedDisk != null) {
+      final serverAvailable =
+          serverCoverUrl != null && _serverCoverSupported != false;
+
       // 服务器封面优先：本地生成的封面（或旧缓存）可能是服务器上
       // 用户自定义帧出现之前截取的，只要服务器可用就让位给服务器封面，
       // 同时顺带补齐缺失的元数据
-      final needsServerRefresh =
-          !cachedDisk.fromServer || !cachedDisk.hasMeta;
-      if (needsServerRefresh &&
-          serverCoverUrl != null &&
-          _serverCoverSupported != false) {
+      final needsServerRefresh = !cachedDisk.fromServer || !cachedDisk.hasMeta;
+      if (needsServerRefresh && serverAvailable) {
         final result = await _fetchServerCover(serverCoverUrl);
         if (result != null) {
           final (thumb, status) = result;
@@ -333,6 +357,7 @@ class VideoThumbnailService {
               durationSeconds:
                   thumb.durationSeconds ?? cachedDisk.durationSeconds,
               fromServer: true,
+              lastModified: thumb.lastModified,
             );
             _memoryCache[videoUrl] = merged;
             _writeDiskCache(videoUrl, merged);
@@ -341,6 +366,30 @@ class VideoThumbnailService {
           if (status == 404) {
             _serverCoverSupported = false;
           }
+        }
+      } else if (cachedDisk.fromServer &&
+          cachedDisk.lastModified != null &&
+          serverAvailable &&
+          !_sessionValidated.contains(videoUrl)) {
+        // 会话内首次展示：条件请求校验封面是否已更换（如自定义帧更新）
+        _sessionValidated.add(videoUrl);
+        final result = await _fetchServerCover(
+          serverCoverUrl,
+          ifModifiedSince: cachedDisk.lastModified,
+        );
+        if (result != null) {
+          final (thumb, status) = result;
+          if (thumb != null) {
+            // 200：封面已更换
+            _serverCoverSupported = true;
+            _memoryCache[videoUrl] = thumb;
+            _writeDiskCache(videoUrl, thumb);
+            return thumb;
+          }
+          if (status == 404) {
+            _serverCoverSupported = false;
+          }
+          // 304 或网络异常：缓存仍有效
         }
       }
       _memoryCache[videoUrl] = cachedDisk;
