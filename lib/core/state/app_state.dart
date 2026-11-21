@@ -612,7 +612,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final children = await _apiClient!.getFolderTree(path: rootPath);
+      // 视频模块显示全部子目录（含叶子），与 Electron 端 getFolderTree(noLeaf=false) 一致
+      final children = await _apiClient!.getFolderTree(
+        path: rootPath,
+        includeLeaf: true,
+      );
       _videoTreeNodes = children
           .map(
             (f) => FolderTreeNode(
@@ -643,7 +647,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final children = await _apiClient!.getFolderTree(path: node.fullPath);
+      // 视频模块显示全部子目录（含叶子）
+      final children = await _apiClient!.getFolderTree(
+        path: node.fullPath,
+        includeLeaf: true,
+      );
       node.children = children
           .map(
             (f) => FolderTreeNode(

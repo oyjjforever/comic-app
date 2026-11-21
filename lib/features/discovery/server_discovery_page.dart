@@ -26,9 +26,13 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
   StreamSubscription<ServerInfo>? _serverFoundSub;
   bool _handled = false;
 
+  /// dispose 中不可使用 context，提前持有引用
+  late final AppState _appState;
+
   @override
   void initState() {
     super.initState();
+    _appState = context.read<AppState>();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _autoConnect();
       // 启动时自动检测更新（静默，有频率限制）
@@ -39,7 +43,7 @@ class _ServerDiscoveryPageState extends State<ServerDiscoveryPage> {
   @override
   void dispose() {
     _serverFoundSub?.cancel();
-    context.read<AppState>().discovery.stopScan();
+    _appState.discovery.stopScan();
     super.dispose();
   }
 

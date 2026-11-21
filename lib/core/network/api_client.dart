@@ -56,11 +56,17 @@ class ApiClient {
 
   // ==================== 文件浏览相关 ====================
 
-  /// 获取文件夹树（非叶子节点）
-  Future<List<FolderInfo>> getFolderTree({String? path}) async {
+  /// 获取文件夹树（默认非叶子节点；视频模块传 [includeLeaf] 显示全部）
+  Future<List<FolderInfo>> getFolderTree({
+    String? path,
+    bool includeLeaf = false,
+  }) async {
     final queryParams = <String, String>{};
     if (path != null) {
       queryParams['path'] = path;
+    }
+    if (includeLeaf) {
+      queryParams['includeLeaf'] = 'true';
     }
     final queryString = queryParams.entries
         .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')

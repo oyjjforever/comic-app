@@ -295,6 +295,31 @@ class VideoThumbnailService {
     // 3. 检查磁盘缓存（已生成的封面直接复用，避免重新解码视频）
     final cachedDisk = await _readDiskCache(videoUrl);
     if (cachedDisk != null) {
+      // 旧版本缓存只有封面没有元数据：从服务器补取（响应头带分辨率/时长）
+      if (!cachedDisk.hasMeta &&
+          cachedDisk.durationSeconds == null &&
+          serverCoverUrl != null &&
+          _serverCoverSupported != false) {
+        final result = await _fetchServerCover(serverCoverUrl);
+        if (result != null) {
+          final (thumb, status) = result;
+          if (thumb != null) {
+            _serverCoverSupported = true;
+            final merged = VideoThumbnail(
+              bytes: thumb.bytes ?? cachedDisk.bytes,
+              width: thumb.width,
+              height: thumb.height,
+              durationSeconds: thumb.durationSeconds,
+            );
+            _memoryCache[videoUrl] = merged;
+            _writeDiskCache(videoUrl, merged);
+            return merged;
+          }
+          if (status == 404) {
+            _serverCoverSupported = false;
+          }
+        }
+      }
       _memoryCache[videoUrl] = cachedDisk;
       return cachedDisk;
     }
