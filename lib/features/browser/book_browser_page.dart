@@ -44,10 +44,10 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
 
   Future<void> _loadInitialData() async {
     final appState = context.read<AppState>();
-    if (appState.connectedServer?.resourcePath != null &&
-        appState.connectedServer!.resourcePath.isNotEmpty) {
-      await appState.loadTreeRoot(appState.connectedServer!.resourcePath);
-    }
+    // 全部漫画数据源作为树的顶层节点
+    final paths = appState.connectedServer?.effectiveResourcePaths ??
+        const <String>[];
+    appState.loadTreeRoot(paths);
     await appState.loadFavorites();
   }
 

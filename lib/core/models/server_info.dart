@@ -7,6 +7,8 @@ class ServerInfo {
   final String version;
   final String resourcePath;
   final String videoResourcePath;
+  final List<String> resourcePaths;
+  final List<String> videoResourcePaths;
 
   ServerInfo({
     required this.name,
@@ -16,10 +18,22 @@ class ServerInfo {
     this.version = '1.0.0',
     this.resourcePath = '',
     this.videoResourcePath = '',
+    this.resourcePaths = const [],
+    this.videoResourcePaths = const [],
   });
 
   /// 服务器基础 URL
   String get baseUrl => 'http://$ip:$port';
+
+  /// 漫画数据源列表（多路径数组，旧服务器回退单路径字段）
+  List<String> get effectiveResourcePaths => resourcePaths.isNotEmpty
+      ? resourcePaths
+      : [if (resourcePath.isNotEmpty) resourcePath];
+
+  /// 视频数据源列表
+  List<String> get effectiveVideoResourcePaths => videoResourcePaths.isNotEmpty
+      ? videoResourcePaths
+      : [if (videoResourcePath.isNotEmpty) videoResourcePath];
 
   /// 从 mDNS 发现结果创建
   factory ServerInfo.fromDiscovery({
@@ -45,6 +59,14 @@ class ServerInfo {
       version: json['version'] as String? ?? '1.0.0',
       resourcePath: json['resourcePath'] as String? ?? '',
       videoResourcePath: json['videoResourcePath'] as String? ?? '',
+      resourcePaths: (json['resourcePaths'] as List<dynamic>? ?? [])
+          .map((e) => e as String)
+          .where((e) => e.isNotEmpty)
+          .toList(),
+      videoResourcePaths: (json['videoResourcePaths'] as List<dynamic>? ?? [])
+          .map((e) => e as String)
+          .where((e) => e.isNotEmpty)
+          .toList(),
     );
   }
 

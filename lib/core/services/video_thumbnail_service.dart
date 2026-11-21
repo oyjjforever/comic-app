@@ -16,7 +16,16 @@ class VideoThumbnail {
   final int? height;
   final double? durationSeconds;
 
-  const VideoThumbnail({this.bytes, this.width, this.height, this.durationSeconds});
+  /// 封面来源是否为服务器（服务器封面可能是用户自定义帧，优先级高于本地生成）
+  final bool fromServer;
+
+  const VideoThumbnail({
+    this.bytes,
+    this.width,
+    this.height,
+    this.durationSeconds,
+    this.fromServer = false,
+  });
 
   bool get hasMeta => width != null && height != null;
 
@@ -56,14 +65,21 @@ class VideoThumbnail {
         if (width != null) 'w': width,
         if (height != null) 'h': height,
         if (durationSeconds != null) 'd': durationSeconds,
+        if (fromServer) 'src': 'server',
       };
 
   static VideoThumbnail? fromMetaJson(Map<String, dynamic> json) {
     final w = json['w'] as int?;
     final h = json['h'] as int?;
     final d = (json['d'] as num?)?.toDouble();
-    if (w == null && h == null && d == null) return null;
-    return VideoThumbnail(width: w, height: h, durationSeconds: d);
+    final fromServer = json['src'] == 'server';
+    if (w == null && h == null && d == null && !fromServer) return null;
+    return VideoThumbnail(
+      width: w,
+      height: h,
+      durationSeconds: d,
+      fromServer: fromServer,
+    );
   }
 }
 
@@ -175,6 +191,7 @@ class VideoThumbnailService {
         width: metaOnly?.width,
         height: metaOnly?.height,
         durationSeconds: metaOnly?.durationSeconds,
+        fromServer: metaOnly?.fromServer ?? false,
       );
     } catch (e) {
       debugPrint('[VideoThumbnail] 读取磁盘缓存失败: $e');
@@ -191,7 +208,7 @@ class VideoThumbnailService {
         await _coverFile(dir.path, videoUrl)
             .writeAsBytes(thumb.bytes!, flush: true);
       }
-      if (thumb.hasMeta || thumb.durationSeconds != null) {
+      if (thumb.hasMeta || thumb.durationSeconds != null || thumb.fromServer) {
         await _metaFile(dir.path, videoUrl)
             .writeAsString(jsonEncode(thumb.toMetaJson()), flush: true);
       }
@@ -265,6 +282,7 @@ class VideoThumbnailService {
           width: parseInt('x-video-width'),
           height: parseInt('x-video-height'),
           durationSeconds: duration != null && duration > 0 ? duration : null,
+          fromServer: true,
         );
         return (thumb, 200);
       }
@@ -295,9 +313,12 @@ class VideoThumbnailService {
     // 3. 检查磁盘缓存（已生成的封面直接复用，避免重新解码视频）
     final cachedDisk = await _readDiskCache(videoUrl);
     if (cachedDisk != null) {
-      // 旧版本缓存只有封面没有元数据：从服务器补取（响应头带分辨率/时长）
-      if (!cachedDisk.hasMeta &&
-          cachedDisk.durationSeconds == null &&
+      // 服务器封面优先：本地生成的封面（或旧缓存）可能是服务器上
+      // 用户自定义帧出现之前截取的，只要服务器可用就让位给服务器封面，
+      // 同时顺带补齐缺失的元数据
+      final needsServerRefresh =
+          !cachedDisk.fromServer || !cachedDisk.hasMeta;
+      if (needsServerRefresh &&
           serverCoverUrl != null &&
           _serverCoverSupported != false) {
         final result = await _fetchServerCover(serverCoverUrl);
@@ -307,9 +328,11 @@ class VideoThumbnailService {
             _serverCoverSupported = true;
             final merged = VideoThumbnail(
               bytes: thumb.bytes ?? cachedDisk.bytes,
-              width: thumb.width,
-              height: thumb.height,
-              durationSeconds: thumb.durationSeconds,
+              width: thumb.width ?? cachedDisk.width,
+              height: thumb.height ?? cachedDisk.height,
+              durationSeconds:
+                  thumb.durationSeconds ?? cachedDisk.durationSeconds,
+              fromServer: true,
             );
             _memoryCache[videoUrl] = merged;
             _writeDiskCache(videoUrl, merged);

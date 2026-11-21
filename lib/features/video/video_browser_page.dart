@@ -43,10 +43,10 @@ class _VideoBrowserPageState extends State<VideoBrowserPage> {
 
   Future<void> _loadInitialData() async {
     final appState = context.read<AppState>();
-    final videoPath = appState.connectedServer?.videoResourcePath;
-    if (videoPath != null && videoPath.isNotEmpty) {
-      await appState.loadVideoTreeRoot(videoPath);
-    }
+    // 全部视频数据源作为树的顶层节点
+    final videoPaths = appState.connectedServer?.effectiveVideoResourcePaths ??
+        const <String>[];
+    appState.loadVideoTreeRoot(videoPaths);
     await appState.loadVideoFavorites();
   }
 
@@ -79,8 +79,9 @@ class _VideoBrowserPageState extends State<VideoBrowserPage> {
     final appState = context.watch<AppState>();
     final size = windowSizeOf(context);
     final isCompact = size == WindowSize.compact;
-    final videoPath = appState.connectedServer?.videoResourcePath;
-    final hasVideoPath = videoPath != null && videoPath.isNotEmpty;
+    final hasVideoPath =
+        (appState.connectedServer?.effectiveVideoResourcePaths ?? const [])
+            .isNotEmpty;
 
     return Scaffold(
       key: _scaffoldKey,

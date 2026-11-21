@@ -39,7 +39,6 @@ class AppState extends ChangeNotifier {
   // 文件夹树状态
   List<FolderTreeNode> _treeNodes = [];
   String? _selectedTreePath;
-  bool _isTreeLoading = false;
 
   // 视图模式
   ViewMode _viewMode = ViewMode.favorites;
@@ -61,7 +60,6 @@ class AppState extends ChangeNotifier {
   List<FileInfo> _videoFiles = [];
   List<FolderTreeNode> _videoTreeNodes = [];
   String? _selectedVideoTreePath;
-  bool _isVideoTreeLoading = false;
   VideoViewMode _videoViewMode = VideoViewMode.favorites;
 
   // 视频收藏状态
@@ -92,7 +90,6 @@ class AppState extends ChangeNotifier {
   // 树 Getters
   List<FolderTreeNode> get treeNodes => _treeNodes;
   String? get selectedTreePath => _selectedTreePath;
-  bool get isTreeLoading => _isTreeLoading;
 
   // 视图模式 Getter
   ViewMode get viewMode => _viewMode;
@@ -112,7 +109,6 @@ class AppState extends ChangeNotifier {
   List<FileInfo> get videoFiles => _videoFiles;
   List<FolderTreeNode> get videoTreeNodes => _videoTreeNodes;
   String? get selectedVideoTreePath => _selectedVideoTreePath;
-  bool get isVideoTreeLoading => _isVideoTreeLoading;
   VideoViewMode get videoViewMode => _videoViewMode;
   List<FavoriteInfo> get videoFavorites => _videoFavorites;
   List<FileInfo> get videoFavoriteFiles => _videoFavoriteFiles;
@@ -250,33 +246,20 @@ class AppState extends ChangeNotifier {
 
   // ==================== 文件夹树 ====================
 
-  /// 加载文件夹树的根节点
-  Future<void> loadTreeRoot(String rootPath) async {
-    if (_apiClient == null) return;
-    _isTreeLoading = true;
+  /// 加载文件夹树：每个数据源作为顶层根节点（可展开）
+  void loadTreeRoot(List<String> rootPaths) {
+    if (rootPaths.isEmpty) return;
+    _treeNodes = rootPaths
+        .where((p) => p.isNotEmpty)
+        .map((p) => FolderTreeNode(name: _pathBasename(p), fullPath: p, isLeaf: false))
+        .toList();
     notifyListeners();
+  }
 
-    try {
-      final children = await _apiClient!.getFolderTree(path: rootPath);
-      _treeNodes = children
-          .map(
-            (f) => FolderTreeNode(
-              name: f.name,
-              fullPath: f.fullPath,
-              isLeaf: f.isLeaf,
-              children: [],
-              isExpanded: false,
-              isLoading: false,
-            ),
-          )
-          .toList();
-      _isTreeLoading = false;
-      notifyListeners();
-    } catch (e) {
-      _errorMessage = '加载文件夹树失败: $e';
-      _isTreeLoading = false;
-      notifyListeners();
-    }
+  /// 提取路径最后一段作为名称（兼容 / 与 \）
+  static String _pathBasename(String path) {
+    final parts = path.split(RegExp(r'[/\\]'));
+    return parts.isEmpty || parts.last.isEmpty ? path : parts.last;
   }
 
   /// 懒加载树的子节点
@@ -605,37 +588,14 @@ class AppState extends ChangeNotifier {
 
   // ==================== 视频浏览 ====================
 
-  /// 加载视频文件夹树的根节点
-  Future<void> loadVideoTreeRoot(String rootPath) async {
-    if (_apiClient == null) return;
-    _isVideoTreeLoading = true;
+  /// 加载视频文件夹树：每个视频数据源作为顶层根节点（可展开）
+  void loadVideoTreeRoot(List<String> rootPaths) {
+    if (rootPaths.isEmpty) return;
+    _videoTreeNodes = rootPaths
+        .where((p) => p.isNotEmpty)
+        .map((p) => FolderTreeNode(name: _pathBasename(p), fullPath: p, isLeaf: false))
+        .toList();
     notifyListeners();
-
-    try {
-      // 视频模块显示全部子目录（含叶子），与 Electron 端 getFolderTree(noLeaf=false) 一致
-      final children = await _apiClient!.getFolderTree(
-        path: rootPath,
-        includeLeaf: true,
-      );
-      _videoTreeNodes = children
-          .map(
-            (f) => FolderTreeNode(
-              name: f.name,
-              fullPath: f.fullPath,
-              isLeaf: f.isLeaf,
-              children: [],
-              isExpanded: false,
-              isLoading: false,
-            ),
-          )
-          .toList();
-      _isVideoTreeLoading = false;
-      notifyListeners();
-    } catch (e) {
-      _errorMessage = '加载视频文件夹树失败: $e';
-      _isVideoTreeLoading = false;
-      notifyListeners();
-    }
   }
 
   /// 懒加载视频树子节点

@@ -59,14 +59,7 @@ class _FolderTreeViewState extends State<FolderTreeView> {
           color: Theme.of(context).dividerColor,
         ),
         Expanded(
-          child: appState.isTreeLoading && nodes.isEmpty
-              ? const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(20),
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                )
-              : nodes.isEmpty
+          child: nodes.isEmpty
               ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(20),
@@ -78,17 +71,17 @@ class _FolderTreeViewState extends State<FolderTreeView> {
                 )
               : ListView.builder(
                   padding: const EdgeInsets.only(top: 4, bottom: 8),
-              itemCount: nodes.length,
-              itemBuilder: (context, index) {
-                return _TreeNodeItem(
-                  node: nodes[index],
-                  level: 0,
-                  selectedPath: appState.selectedTreePath,
-                  onExpandToggle: _onExpandToggle,
-                  onSelect: _onSelect,
-                );
-              },
-            ),
+                  itemCount: nodes.length,
+                  itemBuilder: (context, index) {
+                    return _TreeNodeItem(
+                      node: nodes[index],
+                      level: 0,
+                      selectedPath: appState.selectedTreePath,
+                      onExpandToggle: _onExpandToggle,
+                      onSelect: _onSelect,
+                    );
+                  },
+                ),
         ),
       ],
     );
@@ -159,14 +152,7 @@ class _VideoFolderTreeViewState extends State<VideoFolderTreeView> {
           color: Theme.of(context).dividerColor,
         ),
         Expanded(
-          child: appState.isVideoTreeLoading && nodes.isEmpty
-              ? const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(20),
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                )
-              : nodes.isEmpty
+          child: nodes.isEmpty
               ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(20),
@@ -178,18 +164,18 @@ class _VideoFolderTreeViewState extends State<VideoFolderTreeView> {
                 )
               : ListView.builder(
                   padding: const EdgeInsets.only(top: 4, bottom: 8),
-              itemCount: nodes.length,
-              itemBuilder: (context, index) {
-                return _TreeNodeItem(
-                  node: nodes[index],
-                  level: 0,
-                  selectedPath: appState.selectedVideoTreePath,
-                  onExpandToggle: _onExpandToggle,
-                  onSelect: _onSelect,
-                  isVideo: true,
-                );
-              },
-            ),
+                  itemCount: nodes.length,
+                  itemBuilder: (context, index) {
+                    return _TreeNodeItem(
+                      node: nodes[index],
+                      level: 0,
+                      selectedPath: appState.selectedVideoTreePath,
+                      onExpandToggle: _onExpandToggle,
+                      onSelect: _onSelect,
+                      isVideo: true,
+                    );
+                  },
+                ),
         ),
       ],
     );

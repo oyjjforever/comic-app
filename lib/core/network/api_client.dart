@@ -37,16 +37,7 @@ class ApiClient {
       final response = await _httpClient.get(uri);
       if (response.statusCode == 200) {
         final data = _parseJson(response.body);
-        final parsedUri = Uri.parse(baseUrl);
-        return ServerInfo(
-          name: data['name'] as String? ?? '',
-          hostname: data['hostname'] as String? ?? '',
-          ip: parsedUri.host,
-          port: parsedUri.port > 0 ? parsedUri.port : 9527,
-          version: data['version'] as String? ?? '1.0.0',
-          resourcePath: data['resourcePath'] as String? ?? '',
-          videoResourcePath: data['videoResourcePath'] as String? ?? '',
-        );
+        return ServerInfo.fromJson(data, Uri.parse(baseUrl).host);
       }
       return null;
     } catch (_) {
