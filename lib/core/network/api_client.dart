@@ -25,7 +25,7 @@ class ApiClient {
 
   Future<http.Response> _get(Uri uri) async {
     try {
-      return await _get(uri).timeout(_requestTimeout);
+      return await _httpClient.get(uri).timeout(_requestTimeout);
     } on TimeoutException {
       throw Exception('请求超时，请检查网络连接');
     }
@@ -47,7 +47,7 @@ class ApiClient {
 
   Future<http.Response> _delete(Uri uri) async {
     try {
-      return await _delete(uri).timeout(_requestTimeout);
+      return await _httpClient.delete(uri).timeout(_requestTimeout);
     } on TimeoutException {
       throw Exception('请求超时，请检查网络连接');
     }
