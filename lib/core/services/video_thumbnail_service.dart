@@ -9,15 +9,69 @@ import 'package:path_provider/path_provider.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:image/image.dart' as img;
 
+/// 视频缩略图结果：封面字节 + 元数据（分辨率/时长）
+class VideoThumbnail {
+  final Uint8List? bytes;
+  final int? width;
+  final int? height;
+  final double? durationSeconds;
+
+  const VideoThumbnail({this.bytes, this.width, this.height, this.durationSeconds});
+
+  bool get hasMeta => width != null && height != null;
+
+  /// 分辨率标签：4K / 1080p / 720p ...
+  String get resolutionLabel {
+    final h = height ?? 0;
+    if (h >= 2000) return '4K';
+    if (h >= 1000) return '1080p';
+    if (h >= 700) return '720p';
+    if (h >= 400) return '480p';
+    return h > 0 ? '${h}p' : '';
+  }
+
+  /// 时长标签：mm:ss / h:mm:ss
+  String get formattedDuration {
+    final d = durationSeconds;
+    if (d == null || d <= 0) return '';
+    final total = d.round();
+    final hours = total ~/ 3600;
+    final minutes = (total % 3600) ~/ 60;
+    final seconds = total % 60;
+    final mm = minutes.toString().padLeft(2, '0');
+    final ss = seconds.toString().padLeft(2, '0');
+    return hours > 0 ? '$hours:$mm:$ss' : '$mm:$ss';
+  }
+
+  /// 副标题："1080p · 42:10"（缺项自动省略）
+  String get subtitleLabel {
+    final parts = [
+      if (resolutionLabel.isNotEmpty) resolutionLabel,
+      if (formattedDuration.isNotEmpty) formattedDuration,
+    ];
+    return parts.join(' · ');
+  }
+
+  Map<String, dynamic> toMetaJson() => {
+        if (width != null) 'w': width,
+        if (height != null) 'h': height,
+        if (durationSeconds != null) 'd': durationSeconds,
+      };
+
+  static VideoThumbnail? fromMetaJson(Map<String, dynamic> json) {
+    final w = json['w'] as int?;
+    final h = json['h'] as int?;
+    final d = (json['d'] as num?)?.toDouble();
+    if (w == null && h == null && d == null) return null;
+    return VideoThumbnail(width: w, height: h, durationSeconds: d);
+  }
+}
+
 /// 视频缩略图服务
 /// 获取顺序：
 /// 1. 内存/磁盘缓存
-/// 2. 服务器封面接口（/api/video-cover，ffmpeg 生成，全端共享）——新服务器
-/// 3. 本地 media_kit (libmpv) 解码视频帧生成——旧服务器回退方案
-/// 本地生成优化：
-/// - 双 Player 并行处理（速度翻倍）
-/// - 截图后压缩为 240px JPEG quality 50（~15KB）
-/// - 8 秒超时，不重试
+/// 2. 服务器封面接口（/api/video-cover，ffmpeg 生成，全端共享，响应头带元数据）——新服务器
+/// 3. 本地 media_kit (libmpv) 解码视频帧生成（顺带捕获宽高/时长）——旧服务器回退
 class VideoThumbnailService {
   VideoThumbnailService._();
   static final VideoThumbnailService instance = VideoThumbnailService._();
@@ -29,11 +83,11 @@ class VideoThumbnailService {
   static const Duration _frameTimeout = Duration(seconds: 8);
   static const Duration _serverCoverTimeout = Duration(seconds: 15);
 
-  // 内存缓存：videoUrl -> thumbnail bytes
-  final Map<String, Uint8List?> _memoryCache = {};
+  // 内存缓存：videoUrl -> 缩略图（含元数据）
+  final Map<String, VideoThumbnail> _memoryCache = {};
 
   // 正在生成的请求去重
-  final Map<String, Future<Uint8List?>> _pendingRequests = {};
+  final Map<String, Future<VideoThumbnail?>> _pendingRequests = {};
 
   // Player 池
   final List<_PooledPlayer> _pool = [];
@@ -81,34 +135,66 @@ class VideoThumbnailService {
     return _coverDir;
   }
 
-  /// 根据视频 URL 生成稳定的封面文件名（md5，与 Electron 端方案一致）
-  File _coverFile(String dirPath, String videoUrl) {
-    final hash = md5.convert(utf8.encode(videoUrl)).toString();
-    return File('$dirPath${Platform.pathSeparator}$hash.jpg');
-  }
+  /// 根据视频 URL 生成稳定的缓存文件基名（md5，与 Electron 端方案一致）
+  String _cacheKey(String videoUrl) =>
+      md5.convert(utf8.encode(videoUrl)).toString();
 
-  /// 读取磁盘缓存的封面
-  Future<Uint8List?> _readDiskCache(String videoUrl) async {
+  File _coverFile(String dirPath, String videoUrl) =>
+      File('$dirPath${Platform.pathSeparator}${_cacheKey(videoUrl)}.jpg');
+
+  File _metaFile(String dirPath, String videoUrl) =>
+      File('$dirPath${Platform.pathSeparator}${_cacheKey(videoUrl)}.json');
+
+  /// 读取磁盘缓存（封面 jpg + 元数据 json sidecar）
+  Future<VideoThumbnail?> _readDiskCache(String videoUrl) async {
     try {
       final dir = await _getCoverDir();
       if (dir == null) return null;
-      final file = _coverFile(dir.path, videoUrl);
-      if (file.existsSync()) {
-        return file.readAsBytes();
+
+      Uint8List? bytes;
+      final coverFile = _coverFile(dir.path, videoUrl);
+      if (coverFile.existsSync()) {
+        bytes = await coverFile.readAsBytes();
       }
+
+      VideoThumbnail? metaOnly;
+      final metaFile = _metaFile(dir.path, videoUrl);
+      if (metaFile.existsSync()) {
+        try {
+          final json =
+              jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
+          metaOnly = VideoThumbnail.fromMetaJson(json);
+        } catch (_) {
+          // 元数据损坏，忽略
+        }
+      }
+
+      if (bytes == null && metaOnly == null) return null;
+      return VideoThumbnail(
+        bytes: bytes,
+        width: metaOnly?.width,
+        height: metaOnly?.height,
+        durationSeconds: metaOnly?.durationSeconds,
+      );
     } catch (e) {
       debugPrint('[VideoThumbnail] 读取磁盘缓存失败: $e');
+      return null;
     }
-    return null;
   }
 
-  /// 写入磁盘缓存
-  Future<void> _writeDiskCache(String videoUrl, Uint8List bytes) async {
+  /// 写入磁盘缓存（封面与元数据 sidecar）
+  Future<void> _writeDiskCache(String videoUrl, VideoThumbnail thumb) async {
     try {
       final dir = await _getCoverDir();
       if (dir == null) return;
-      final file = _coverFile(dir.path, videoUrl);
-      await file.writeAsBytes(bytes, flush: true);
+      if (thumb.bytes != null) {
+        await _coverFile(dir.path, videoUrl)
+            .writeAsBytes(thumb.bytes!, flush: true);
+      }
+      if (thumb.hasMeta || thumb.durationSeconds != null) {
+        await _metaFile(dir.path, videoUrl)
+            .writeAsString(jsonEncode(thumb.toMetaJson()), flush: true);
+      }
     } catch (e) {
       debugPrint('[VideoThumbnail] 写入磁盘缓存失败: $e');
     }
@@ -162,14 +248,25 @@ class VideoThumbnailService {
   }
 
   /// 请求服务器封面接口
-  /// 返回 (封面字节, HTTP 状态码)；网络异常返回 null
-  Future<(Uint8List?, int)?> _fetchServerCover(String coverUrl) async {
+  /// 响应头带 X-Video-Width/Height/Duration（ffprobe 元数据）
+  /// 返回 (结果, HTTP 状态码)；网络异常返回 null
+  Future<(VideoThumbnail?, int)?> _fetchServerCover(String coverUrl) async {
     try {
       final response = await http
           .get(Uri.parse(coverUrl))
           .timeout(_serverCoverTimeout);
       if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
-        return (response.bodyBytes, 200);
+        int? parseInt(String name) =>
+            int.tryParse(response.headers[name] ?? '');
+        final duration =
+            double.tryParse(response.headers['x-video-duration'] ?? '');
+        final thumb = VideoThumbnail(
+          bytes: response.bodyBytes,
+          width: parseInt('x-video-width'),
+          height: parseInt('x-video-height'),
+          durationSeconds: duration != null && duration > 0 ? duration : null,
+        );
+        return (thumb, 200);
       }
       return (null, response.statusCode);
     } catch (_) {
@@ -177,16 +274,17 @@ class VideoThumbnailService {
     }
   }
 
-  /// 获取视频缩略图
+  /// 获取视频缩略图（含元数据）
   /// [videoUrl] 视频源 URL（同时作为缓存键）
   /// [serverCoverUrl] 服务器封面接口 URL（提供时优先尝试服务器 ffmpeg 封面）
-  Future<Uint8List?> getThumbnail(
+  Future<VideoThumbnail?> getThumbnail(
     String videoUrl, {
     String? serverCoverUrl,
   }) async {
     // 1. 检查内存缓存
-    if (_memoryCache.containsKey(videoUrl)) {
-      return _memoryCache[videoUrl];
+    final cachedMem = _memoryCache[videoUrl];
+    if (cachedMem != null) {
+      return cachedMem;
     }
 
     // 2. 检查是否有正在进行的请求（去重）
@@ -195,22 +293,22 @@ class VideoThumbnailService {
     }
 
     // 3. 检查磁盘缓存（已生成的封面直接复用，避免重新解码视频）
-    final cached = await _readDiskCache(videoUrl);
-    if (cached != null) {
-      _memoryCache[videoUrl] = cached;
-      return cached;
+    final cachedDisk = await _readDiskCache(videoUrl);
+    if (cachedDisk != null) {
+      _memoryCache[videoUrl] = cachedDisk;
+      return cachedDisk;
     }
 
     // 4. 服务器封面优先（新服务器 ffmpeg 生成，移动端零解码）
     if (serverCoverUrl != null && _serverCoverSupported != false) {
       final result = await _fetchServerCover(serverCoverUrl);
       if (result != null) {
-        final (bytes, status) = result;
-        if (bytes != null) {
+        final (thumb, status) = result;
+        if (thumb != null) {
           _serverCoverSupported = true;
-          _memoryCache[videoUrl] = bytes;
-          _writeDiskCache(videoUrl, bytes);
-          return bytes;
+          _memoryCache[videoUrl] = thumb;
+          _writeDiskCache(videoUrl, thumb);
+          return thumb;
         }
         if (status == 404) {
           // 旧服务器无此接口，后续直接走本地生成
@@ -221,7 +319,7 @@ class VideoThumbnailService {
     }
 
     // 5. 本地 mpv 生成（回退方案），创建任务并加入队列
-    final completer = Completer<Uint8List?>();
+    final completer = Completer<VideoThumbnail?>();
     _queue.add(_ThumbnailJob(videoUrl, completer));
     final future = completer.future;
     _pendingRequests[videoUrl] = future;
@@ -231,12 +329,14 @@ class VideoThumbnailService {
 
     try {
       final result = await future;
-      _memoryCache[videoUrl] = result;
-      // 限制内存缓存大小
-      if (_memoryCache.length > 100) {
-        final keys = _memoryCache.keys.toList();
-        for (int i = 0; i < 20; i++) {
-          _memoryCache.remove(keys[i]);
+      if (result != null) {
+        _memoryCache[videoUrl] = result;
+        // 限制内存缓存大小
+        if (_memoryCache.length > 100) {
+          final keys = _memoryCache.keys.toList();
+          for (int i = 0; i < 20; i++) {
+            _memoryCache.remove(keys[i]);
+          }
         }
       }
       return result;
@@ -268,7 +368,7 @@ class VideoThumbnailService {
     }
   }
 
-  /// 执行单个缩略图生成任务
+  /// 执行单个缩略图生成任务（顺带捕获宽高/时长）
   Future<void> _processJob(_ThumbnailJob job, _PooledPlayer pp) async {
     try {
       final player = pp.player;
@@ -281,22 +381,24 @@ class VideoThumbnailService {
       await player.open(Media(job.videoUrl), play: true);
 
       // 等待视频帧就绪（最多 8 秒）
-      bool ready = false;
+      int? videoWidth;
+      int? videoHeight;
       final startTime = DateTime.now();
       while (DateTime.now().difference(startTime) < _frameTimeout) {
         await Future.delayed(const Duration(milliseconds: 100));
         final w = player.state.width;
         final h = player.state.height;
         if (w != null && w > 0 && h != null && h > 0) {
+          videoWidth = w;
+          videoHeight = h;
           debugPrint(
               '[VideoThumbnail] Frame ready: ${w}x$h after ${DateTime.now().difference(startTime).inMilliseconds}ms');
-          ready = true;
           break;
         }
       }
 
       Uint8List? screenshot;
-      if (ready) {
+      if (videoWidth != null) {
         // 暂停并等待帧完全解码
         await player.pause();
         await Future.delayed(const Duration(milliseconds: 200));
@@ -306,19 +408,35 @@ class VideoThumbnailService {
           screenshot = _compressThumbnail(screenshot);
           debugPrint(
               '[VideoThumbnail] Compressed: ${screenshot.length} bytes');
-          // 持久化到磁盘缓存（异步，不阻塞后续播放）
-          _writeDiskCache(job.videoUrl, screenshot);
         }
       } else {
         debugPrint(
             '[VideoThumbnail] Timeout: ${DateTime.now().difference(startTime).inMilliseconds}ms');
       }
 
+      // 捕获时长（停止前读取；vf 缩放不影响 state 尺寸）
+      final duration = player.state.duration;
+      final durationSeconds =
+          duration.inMilliseconds > 0 ? duration.inMilliseconds / 1000 : null;
+
       // 停止播放释放资源
       await player.stop();
 
+      final result = VideoThumbnail(
+        bytes: screenshot,
+        width: videoWidth,
+        height: videoHeight,
+        durationSeconds: durationSeconds,
+      );
+      // 持久化到磁盘缓存（异步，不阻塞后续播放）
+      if (screenshot != null ||
+          videoWidth != null ||
+          durationSeconds != null) {
+        _writeDiskCache(job.videoUrl, result);
+      }
+
       _releasePlayer(pp);
-      job.completer.complete(screenshot);
+      job.completer.complete(result);
     } catch (e) {
       debugPrint('[VideoThumbnail] Error: $e');
       try {
@@ -419,6 +537,6 @@ class _PooledPlayer {
 /// 缩略图生成任务
 class _ThumbnailJob {
   final String videoUrl;
-  final Completer<Uint8List?> completer;
+  final Completer<VideoThumbnail?> completer;
   _ThumbnailJob(this.videoUrl, this.completer);
 }

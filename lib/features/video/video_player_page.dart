@@ -292,46 +292,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                         color: Colors.white,
                         strokeWidth: 3,
                       ),
-                    // Controls overlay
-                    if (_showControls) _buildControlsOverlay(context),
                   ],
                 ),
               ),
-              // Bottom controls bar
+              // 单一底部控制栏（进度 + 操作按钮）
               if (_showControls) _buildBottomControls(),
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildControlsOverlay(BuildContext context) {
-    return Container(
-      color: Colors.black26,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          // Rewind 10s
-          IconButton(
-            icon: const Icon(Icons.replay_10, color: Colors.white, size: 36),
-            onPressed: () => _seekRelative(const Duration(seconds: -10)),
-          ),
-          // Play/Pause
-          IconButton(
-            icon: Icon(
-              _isPlaying ? Icons.pause : Icons.play_arrow,
-              color: Colors.white,
-              size: 56,
-            ),
-            onPressed: _togglePlayPause,
-          ),
-          // Forward 10s
-          IconButton(
-            icon: const Icon(Icons.forward_10, color: Colors.white, size: 36),
-            onPressed: () => _seekRelative(const Duration(seconds: 10)),
-          ),
-        ],
       ),
     );
   }
@@ -395,6 +363,26 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              // Rewind 10s
+              IconButton(
+                icon: const Icon(Icons.replay_10, color: Colors.white, size: 30),
+                onPressed: () => _seekRelative(const Duration(seconds: -10)),
+              ),
+              // Play/Pause
+              IconButton(
+                icon: Icon(
+                  _isPlaying ? Icons.pause : Icons.play_arrow,
+                  color: Colors.white,
+                  size: 40,
+                ),
+                onPressed: _togglePlayPause,
+              ),
+              // Forward 10s
+              IconButton(
+                icon: const Icon(Icons.forward_10, color: Colors.white, size: 30),
+                onPressed: () => _seekRelative(const Duration(seconds: 10)),
+              ),
+              const SizedBox(width: 24),
               // Speed
               TextButton(
                 onPressed: _cycleSpeed,
@@ -403,7 +391,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                   style: const TextStyle(color: Colors.white, fontSize: 13),
                 ),
               ),
-              const SizedBox(width: 16),
               // Fullscreen
               IconButton(
                 icon: Icon(

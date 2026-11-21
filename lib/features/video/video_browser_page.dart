@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -457,7 +455,7 @@ class _VideoCard extends StatefulWidget {
 }
 
 class _VideoCardState extends State<_VideoCard> {
-  Future<Uint8List?>? _thumbnailFuture;
+  Future<VideoThumbnail?>? _thumbnailFuture;
 
   // 使用干净 URL（无查询参数），兼容 Android MediaMetadataRetriever
   String get _videoUrl =>
@@ -490,36 +488,36 @@ class _VideoCardState extends State<_VideoCard> {
 
   @override
   Widget build(BuildContext context) {
-    return MediaCard(
-      cover: _buildCover(),
-      title: widget.file.name,
-      subtitle: widget.file.formattedSize,
-      showPlayIcon: true,
-      topStartBadge: MediaBadge(
-        text: widget.file.extension.replaceAll('.', '').toUpperCase(),
-      ),
-      onTap: widget.onTap,
-      onLongPress: widget.onLongPress,
+    return FutureBuilder<VideoThumbnail?>(
+      future: _thumbnailFuture,
+      builder: (context, snapshot) {
+        // 副标题：分辨率 · 时长（元数据随封面一起返回）
+        final subtitle = snapshot.data?.subtitleLabel;
+        return MediaCard(
+          cover: _buildCover(snapshot),
+          title: widget.file.name,
+          subtitle: subtitle != null && subtitle.isNotEmpty ? subtitle : null,
+          showPlayIcon: true,
+          onTap: widget.onTap,
+          onLongPress: widget.onLongPress,
+        );
+      },
     );
   }
 
-  Widget _buildCover() {
-    return FutureBuilder<Uint8List?>(
-      future: _thumbnailFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return _buildPlaceholder();
-        }
-        if (snapshot.hasData && snapshot.data != null) {
-          return Image.memory(
-            snapshot.data!,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-          );
-        }
-        return _buildPlaceholder();
-      },
-    );
+  Widget _buildCover(AsyncSnapshot<VideoThumbnail?> snapshot) {
+    if (snapshot.connectionState == ConnectionState.waiting) {
+      return _buildPlaceholder();
+    }
+    final bytes = snapshot.data?.bytes;
+    if (bytes != null) {
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+      );
+    }
+    return _buildPlaceholder();
   }
 
   Widget _buildPlaceholder() {

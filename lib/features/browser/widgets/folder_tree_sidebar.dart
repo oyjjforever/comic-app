@@ -78,33 +78,36 @@ class _FolderTreeViewState extends State<FolderTreeView> {
                 )
               : ListView.builder(
                   padding: const EdgeInsets.only(top: 4, bottom: 8),
-                  itemCount: nodes.length,
-                  itemBuilder: (context, index) {
-                    return _TreeNodeItem(
-                      node: nodes[index],
-                      level: 0,
-                      selectedPath: appState.selectedTreePath,
-                      onTap: _onNodeTap,
-                    );
-                  },
-                ),
+              itemCount: nodes.length,
+              itemBuilder: (context, index) {
+                return _TreeNodeItem(
+                  node: nodes[index],
+                  level: 0,
+                  selectedPath: appState.selectedTreePath,
+                  onExpandToggle: _onExpandToggle,
+                  onSelect: _onSelect,
+                );
+              },
+            ),
         ),
       ],
     );
   }
 
-  /// 展开/收起 + 懒加载 + 选中
-  void _onNodeTap(FolderTreeNode node) {
+  /// 展开/收起（仅箭头区域触发，不改变选中）
+  void _onExpandToggle(FolderTreeNode node) {
     final appState = context.read<AppState>();
-    if (!node.isLeaf) {
-      setState(() {
-        node.isExpanded = !node.isExpanded;
-      });
-      if (node.isExpanded && node.children.isEmpty) {
-        appState.loadTreeChildren(node);
-      }
+    setState(() {
+      node.isExpanded = !node.isExpanded;
+    });
+    if (node.isExpanded && node.children.isEmpty) {
+      appState.loadTreeChildren(node);
     }
-    appState.selectTreeNode(node.fullPath);
+  }
+
+  /// 选中节点并加载内容
+  void _onSelect(FolderTreeNode node) {
+    context.read<AppState>().selectTreeNode(node.fullPath);
     widget.onNodeSelected?.call();
   }
 }
@@ -175,51 +178,59 @@ class _VideoFolderTreeViewState extends State<VideoFolderTreeView> {
                 )
               : ListView.builder(
                   padding: const EdgeInsets.only(top: 4, bottom: 8),
-                  itemCount: nodes.length,
-                  itemBuilder: (context, index) {
-                    return _TreeNodeItem(
-                      node: nodes[index],
-                      level: 0,
-                      selectedPath: appState.selectedVideoTreePath,
-                      onTap: _onNodeTap,
-                      isVideo: true,
-                    );
-                  },
-                ),
+              itemCount: nodes.length,
+              itemBuilder: (context, index) {
+                return _TreeNodeItem(
+                  node: nodes[index],
+                  level: 0,
+                  selectedPath: appState.selectedVideoTreePath,
+                  onExpandToggle: _onExpandToggle,
+                  onSelect: _onSelect,
+                  isVideo: true,
+                );
+              },
+            ),
         ),
       ],
     );
   }
 
-  void _onNodeTap(FolderTreeNode node) {
+  /// 展开/收起（仅箭头区域触发，不改变选中）
+  void _onExpandToggle(FolderTreeNode node) {
     final appState = context.read<AppState>();
-    if (!node.isLeaf) {
-      setState(() {
-        node.isExpanded = !node.isExpanded;
-      });
-      if (node.isExpanded && node.children.isEmpty) {
-        appState.loadVideoTreeChildren(node);
-      }
+    setState(() {
+      node.isExpanded = !node.isExpanded;
+    });
+    if (node.isExpanded && node.children.isEmpty) {
+      appState.loadVideoTreeChildren(node);
     }
-    appState.selectVideoTreeNode(node.fullPath);
+  }
+
+  /// 选中节点并加载内容
+  void _onSelect(FolderTreeNode node) {
+    context.read<AppState>().selectVideoTreeNode(node.fullPath);
     widget.onNodeSelected?.call();
   }
 }
 
 /// 树节点行（含递归子节点）
+/// - 箭头区域：仅展开/收起
+/// - 行其余区域：选中节点
 class _TreeNodeItem extends StatelessWidget {
   const _TreeNodeItem({
     required this.node,
     required this.level,
     required this.selectedPath,
-    required this.onTap,
+    required this.onExpandToggle,
+    required this.onSelect,
     this.isVideo = false,
   });
 
   final FolderTreeNode node;
   final int level;
   final String? selectedPath;
-  final void Function(FolderTreeNode node) onTap;
+  final void Function(FolderTreeNode node) onExpandToggle;
+  final void Function(FolderTreeNode node) onSelect;
   final bool isVideo;
 
   @override
@@ -235,7 +246,7 @@ class _TreeNodeItem extends StatelessWidget {
           padding: EdgeInsets.only(left: 8.0 + (level * 14.0), right: 8),
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
-            onTap: () => onTap(node),
+            onTap: () => onSelect(node),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
               decoration: BoxDecoration(
@@ -247,21 +258,31 @@ class _TreeNodeItem extends StatelessWidget {
               child: Row(
                 children: [
                   if (hasChildren)
+                    // 展开箭头独立点击区：只展开/收起，不选中
                     SizedBox(
                       width: 18,
-                      height: 18,
-                      child: node.isLoading
-                          ? const Padding(
-                              padding: EdgeInsets.all(3),
-                              child: CircularProgressIndicator(strokeWidth: 1.5),
-                            )
-                          : Icon(
-                              node.isExpanded
-                                  ? Icons.expand_more
-                                  : Icons.chevron_right,
-                              size: 18,
-                              color: AppColors.textSecondary,
-                            ),
+                      height: 24,
+                      child: InkWell(
+                        onTap: () => onExpandToggle(node),
+                        borderRadius: BorderRadius.circular(4),
+                        child: Center(
+                          child: node.isLoading
+                              ? const SizedBox(
+                                  width: 12,
+                                  height: 12,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.5,
+                                  ),
+                                )
+                              : Icon(
+                                  node.isExpanded
+                                      ? Icons.expand_more
+                                      : Icons.chevron_right,
+                                  size: 18,
+                                  color: AppColors.textSecondary,
+                                ),
+                        ),
+                      ),
                     )
                   else
                     const SizedBox(width: 18),
@@ -303,7 +324,8 @@ class _TreeNodeItem extends StatelessWidget {
               node: child,
               level: level + 1,
               selectedPath: selectedPath,
-              onTap: onTap,
+              onExpandToggle: onExpandToggle,
+              onSelect: onSelect,
               isVideo: isVideo,
             ),
           ),
