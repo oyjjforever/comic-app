@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/services/update_service.dart';
 import '../../core/services/download_service.dart';
+import '../../core/state/app_state.dart';
+import '../discovery/server_discovery_page.dart';
 import 'update_dialog.dart';
 
 /// 设置页面
@@ -30,14 +33,45 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
+  Future<void> _disconnect() async {
+    final appState = context.read<AppState>();
+    appState.disconnect();
+    if (mounted) {
+      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const ServerDiscoveryPage()),
+        (_) => false,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final appState = context.watch<AppState>();
+    final server = appState.connectedServer;
 
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
         children: [
+          // 连接部分
+          _buildSectionHeader(theme, '连接'),
+          ListTile(
+            leading: const Icon(Icons.dns_outlined),
+            title: Text(server?.name ?? '未连接'),
+            subtitle: Text(
+              server != null ? '${server.ip}:${server.port}' : '未连接到服务器',
+            ),
+            trailing: server != null
+                ? TextButton.icon(
+                    onPressed: _disconnect,
+                    icon: const Icon(Icons.link_off, size: 18),
+                    label: const Text('断开'),
+                  )
+                : null,
+          ),
+          const Divider(height: 1),
+
           // 关于部分
           _buildSectionHeader(theme, '关于'),
           ListTile(
@@ -112,8 +146,8 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _checkForUpdate() async {
     setState(() => _isChecking = true);
 
+    final updateService = UpdateService();
     try {
-      final updateService = UpdateService();
       // 手动检查时强制检查，忽略频率限制和跳过版本
       final result = await updateService.checkForUpdate(forceCheck: true);
 
@@ -143,6 +177,7 @@ class _SettingsPageState extends State<SettingsPage> {
         );
       }
     } finally {
+      updateService.dispose();
       if (mounted) {
         setState(() => _isChecking = false);
       }

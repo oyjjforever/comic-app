@@ -13,12 +13,17 @@ class ApiClient {
 
   ApiClient({required this.baseUrl}) : _httpClient = http.Client();
 
+  /// 释放 HTTP 连接（断开连接时调用，避免 keep-alive 连接累积）
+  void close() {
+    _httpClient.close();
+  }
+
   /// 测试连接
-  Future<bool> testConnection() async {
+  Future<bool> testConnection({Duration timeout = const Duration(seconds: 5)}) async {
     try {
       final response = await _httpClient
           .get(Uri.parse('$baseUrl/api/server/info'))
-          .timeout(const Duration(seconds: 5));
+          .timeout(timeout);
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -180,7 +185,7 @@ class ApiClient {
       body: jsonEncode({
         'fullPath': fullPath,
         'module': module,
-        if (tags != null) 'tags': tags,
+        'tags': ?tags,
       }),
     );
     _checkResponse(response);

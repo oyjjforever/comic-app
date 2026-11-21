@@ -153,6 +153,11 @@ class UpdateService {
     await prefs.setString(_skippedVersionKey, version);
   }
 
+  /// 释放 HTTP 连接（检查完成后调用）
+  void dispose() {
+    _httpClient.close();
+  }
+
   /// 获取已跳过的版本号
   Future<String?> _getSkippedVersion() async {
     final prefs = await SharedPreferences.getInstance();

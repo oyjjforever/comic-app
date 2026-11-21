@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import '../../core/state/app_state.dart';
+
 import '../../core/models/folder_info.dart';
+import '../../core/state/app_state.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/widgets/media_card.dart';
+import '../../core/widgets/responsive.dart';
 import '../reader/comic_reader_page.dart';
-import '../discovery/server_discovery_page.dart';
 import 'widgets/folder_tree_sidebar.dart';
 
+/// 漫画浏览页
+/// - 手机：抽屉文件夹树 + 顶栏视图切换
+/// - 平板/TV：常驻侧边树 + 自适应封面网格
 class BookBrowserPage extends StatefulWidget {
   const BookBrowserPage({super.key});
 
@@ -17,6 +23,8 @@ class BookBrowserPage extends StatefulWidget {
 class _BookBrowserPageState extends State<BookBrowserPage> {
   final ScrollController _scrollController = ScrollController();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final TextEditingController _searchController = TextEditingController();
+  bool _showSearch = false;
 
   @override
   void initState() {
@@ -30,40 +38,38 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
   @override
   void dispose() {
     _scrollController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
   Future<void> _loadInitialData() async {
     final appState = context.read<AppState>();
-    if (appState.connectedServer?.resourcePath != null) {
-      await appState.loadTreeRoot(appState.connectedServer!.resourcePath!);
+    if (appState.connectedServer?.resourcePath != null &&
+        appState.connectedServer!.resourcePath.isNotEmpty) {
+      await appState.loadTreeRoot(appState.connectedServer!.resourcePath);
     }
     await appState.loadFavorites();
   }
 
+  /// 滚动加载更多：仅目录模式分页（收藏/历史为固定条数，无需分页）
   void _onScroll() {
-    if (_scrollController.position.pixels >=
+    if (_scrollController.position.pixels <
         _scrollController.position.maxScrollExtent - 200) {
-      final appState = context.read<AppState>();
-      if (appState.hasMore && !appState.isLoading) {
-        appState.loadMoreFolders(path: appState.selectedTreePath);
-      }
+      return;
+    }
+    final appState = context.read<AppState>();
+    if (appState.viewMode == ViewMode.folders &&
+        appState.hasMore &&
+        !appState.isLoading) {
+      appState.loadMoreFolders(path: appState.selectedTreePath);
     }
   }
 
   void _openReader(FolderInfo folder) {
     final appState = context.read<AppState>();
     appState.recordBrowseHistory(folder.fullPath);
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => ComicReaderPage(folder: folder)));
-  }
-
-  void _disconnect() {
-    final appState = context.read<AppState>();
-    appState.disconnect();
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const ServerDiscoveryPage()),
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => ComicReaderPage(folder: folder)),
     );
   }
 
@@ -83,50 +89,94 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isWideScreen = screenWidth >= 840;
+    final size = windowSizeOf(context);
+    final isCompact = size == WindowSize.compact;
 
     return Scaffold(
       key: _scaffoldKey,
       appBar: AppBar(
-        title: Text(appState.connectedServer?.name ?? 'Comic Reader'),
-        centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.menu),
-          onPressed: () {
-            if (isWideScreen) {
-              appState.toggleSidebar();
-            } else {
-              _scaffoldKey.currentState?.openDrawer();
-            }
-          },
-          tooltip: 'Menu',
-        ),
+        title: Text(appState.connectedServer?.name ?? '漫画'),
+        leading: isCompact
+            ? IconButton(
+                icon: const Icon(Icons.menu),
+                onPressed: () =>
+                    _scaffoldKey.currentState?.openDrawer(),
+                tooltip: '文件夹',
+              )
+            : IconButton(
+                icon: Icon(
+                  appState.isSidebarExpanded
+                      ? Icons.view_sidebar_outlined
+                      : Icons.view_sidebar,
+                ),
+                onPressed: appState.toggleSidebar,
+                tooltip: '侧边栏',
+              ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.link_off),
-            onPressed: _disconnect,
-            tooltip: 'Disconnect',
+            icon: Icon(_showSearch ? Icons.search_off : Icons.search),
+            onPressed: () {
+              setState(() {
+                _showSearch = !_showSearch;
+                if (!_showSearch) {
+                  _searchController.clear();
+                }
+              });
+            },
+            tooltip: '搜索',
           ),
         ],
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(48),
-          child: _buildViewModeTabs(appState),
+          preferredSize: const Size.fromHeight(44),
+          child: _buildViewModeTabs(appState, isCompact),
         ),
       ),
-      drawer: isWideScreen ? null : _buildDrawer(appState),
-      body: isWideScreen
-          ? _buildWideLayout(appState)
-          : _buildNarrowLayout(appState),
+      drawer: isCompact ? _buildDrawer() : null,
+      body: isCompact
+          ? _buildMainContent(appState)
+          : _buildWideLayout(appState),
     );
   }
 
-  Widget _buildViewModeTabs(AppState appState) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isCompact = screenWidth < 600;
+  /// 手机抽屉：文件夹树
+  Widget _buildDrawer() {
+    return Drawer(
+      backgroundColor: AppColors.surface,
+      width: 300,
+      child: SafeArea(
+        child: FolderTreeView(
+          title: '文件夹',
+          onNodeSelected: () => Navigator.of(context).pop(),
+        ),
+      ),
+    );
+  }
 
+  /// 大屏：常驻侧边树（仅目录模式显示）+ 内容区
+  Widget _buildWideLayout(AppState appState) {
+    final showSidebar =
+        appState.viewMode == ViewMode.folders && appState.isSidebarExpanded;
+    return Row(
+      children: [
+        if (showSidebar)
+          SizedBox(
+            width: 280,
+            child: FolderTreeView(title: '文件夹'),
+          ),
+        if (showSidebar)
+          VerticalDivider(
+            width: 1,
+            thickness: 1,
+            color: Theme.of(context).dividerColor,
+          ),
+        Expanded(child: _buildMainContent(appState)),
+      ],
+    );
+  }
+
+  Widget _buildViewModeTabs(AppState appState, bool isCompact) {
     if (isCompact) {
-      // 小屏幕：只显示图标，等宽分布
+      // 小屏：图标+小字等宽分布
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -134,25 +184,25 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
           children: [
             _buildCompactTab(
               icon: Icons.folder,
-              label: '本地目录',
+              label: '目录',
               isSelected: appState.viewMode == ViewMode.folders,
               onTap: () => appState.setViewMode(ViewMode.folders),
             ),
             _buildCompactTab(
               icon: Icons.favorite,
-              label: '我的收藏',
+              label: '收藏',
               isSelected: appState.viewMode == ViewMode.favorites,
               onTap: () => appState.setViewMode(ViewMode.favorites),
             ),
             _buildCompactTab(
               icon: Icons.history,
-              label: '浏览历史',
+              label: '历史',
               isSelected: appState.viewMode == ViewMode.history,
               onTap: () => appState.setViewMode(ViewMode.history),
             ),
             _buildCompactTab(
               icon: Icons.download,
-              label: '最近下载',
+              label: '下载',
               isSelected: appState.viewMode == ViewMode.downloads,
               onTap: () => appState.setViewMode(ViewMode.downloads),
             ),
@@ -161,30 +211,28 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
       );
     }
 
-    // 大屏幕：显示图标+文字
-    return Container(
-      width: double.infinity,
+    return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       child: SegmentedButton<ViewMode>(
         segments: const [
-          ButtonSegment<ViewMode>(
+          ButtonSegment(
             value: ViewMode.folders,
-            label: Text('本地目录'),
+            label: Text('目录'),
             icon: Icon(Icons.folder),
           ),
-          ButtonSegment<ViewMode>(
+          ButtonSegment(
             value: ViewMode.favorites,
-            label: Text('我的收藏'),
+            label: Text('收藏'),
             icon: Icon(Icons.favorite),
           ),
-          ButtonSegment<ViewMode>(
+          ButtonSegment(
             value: ViewMode.history,
-            label: Text('浏览历史'),
+            label: Text('历史'),
             icon: Icon(Icons.history),
           ),
-          ButtonSegment<ViewMode>(
+          ButtonSegment(
             value: ViewMode.downloads,
-            label: Text('最近下载'),
+            label: Text('下载'),
             icon: Icon(Icons.download),
           ),
         ],
@@ -202,36 +250,23 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
     required bool isSelected,
     required VoidCallback onTap,
   }) {
+    final color = isSelected ? AppColors.accent : AppColors.textSecondary;
     return Expanded(
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? Theme.of(context).colorScheme.secondaryContainer
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                icon,
-                size: 20,
-                color: isSelected
-                    ? Theme.of(context).colorScheme.onSecondaryContainer
-                    : Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+              Icon(icon, size: 20, color: color),
               const SizedBox(height: 2),
               Text(
                 label,
                 style: TextStyle(
                   fontSize: 10,
-                  color: isSelected
-                      ? Theme.of(context).colorScheme.onSecondaryContainer
-                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                  color: color,
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
                 ),
               ),
@@ -242,77 +277,55 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
     );
   }
 
-  Widget _buildDrawer(AppState appState) {
-    return Drawer(
-      child: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Folder Tree',
-                style: Theme.of(context).textTheme.titleMedium,
+  Widget _buildMainContent(AppState appState) {
+    final folders = _getDisplayFolders(appState);
+    final query = _searchController.text;
+    final displayFolders = query.isEmpty
+        ? folders
+        : folders
+              .where((f) => f.name.toLowerCase().contains(query.toLowerCase()))
+              .toList();
+
+    return Column(
+      children: [
+        if (_showSearch)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+            child: TextField(
+              controller: _searchController,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                hintText: '搜索当前列表...',
+                prefixIcon: Icon(Icons.search, size: 20),
+                isDense: true,
               ),
             ),
-            const Divider(height: 1),
-            Expanded(
-              child: appState.isTreeLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : appState.treeNodes.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No folders found',
-                        style: TextStyle(color: Colors.grey[500]),
-                      ),
-                    )
-                  : ListView.builder(
-                      itemCount: appState.treeNodes.length,
-                      itemBuilder: (context, index) {
-                        return _DrawerTreeNode(
-                          node: appState.treeNodes[index],
-                          level: 0,
-                          onClose: () => Navigator.of(context).pop(),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildWideLayout(AppState appState) {
-    return Row(
-      children: [
-        if (appState.viewMode == ViewMode.folders && appState.isSidebarExpanded)
-          const SizedBox(width: 280, child: FolderTreeSidebar()),
-        Expanded(child: _buildMainContent(appState)),
+          ),
+        Expanded(child: _buildGrid(appState, displayFolders)),
       ],
     );
   }
 
-  Widget _buildNarrowLayout(AppState appState) {
-    return _buildMainContent(appState);
-  }
-
-  Widget _buildMainContent(AppState appState) {
-    final folders = _getDisplayFolders(appState);
-
+  Widget _buildGrid(AppState appState, List<FolderInfo> folders) {
     if (appState.isLoading && folders.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
     }
 
     if (folders.isEmpty) {
+      final isSearch = _searchController.text.isNotEmpty;
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.folder_off, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
+            Icon(
+              isSearch ? Icons.search_off : Icons.folder_off,
+              size: 56,
+              color: AppColors.textSecondary,
+            ),
+            const SizedBox(height: 12),
             Text(
-              _getEmptyMessage(appState.viewMode),
-              style: TextStyle(color: Colors.grey[600]),
+              isSearch ? '没有匹配的结果' : _getEmptyMessage(appState.viewMode),
+              style: const TextStyle(color: AppColors.textSecondary),
             ),
           ],
         ),
@@ -323,27 +336,88 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
       onRefresh: () => _refresh(appState),
       child: GridView.builder(
         controller: _scrollController,
-        padding: const EdgeInsets.all(8),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          childAspectRatio: 0.6,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
+        padding: const EdgeInsets.all(10),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 240,
+          childAspectRatio: 0.68,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
         ),
-        itemCount: folders.length + (appState.hasMore ? 1 : 0),
+        itemCount: folders.length +
+            (appState.viewMode == ViewMode.folders && appState.hasMore ? 1 : 0),
         addAutomaticKeepAlives: false,
         addRepaintBoundaries: true,
         itemBuilder: (context, index) {
           if (index >= folders.length) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            );
           }
-          return _FolderCard(
-            folder: folders[index],
-            onTap: () => _openReader(folders[index]),
-            onLongPress: () => _showFolderContextMenu(context, folders[index]),
-            baseUrl: appState.apiClient!.baseUrl,
-          );
+          final folder = folders[index];
+          return _buildFolderCard(appState, folder);
         },
+      ),
+    );
+  }
+
+  Widget _buildFolderCard(AppState appState, FolderInfo folder) {
+    final baseUrl = appState.apiClient?.baseUrl ?? '';
+    final coverUrl =
+        folder.coverPath != null && folder.coverPath!.isNotEmpty
+        ? '$baseUrl/api/file?path=${Uri.encodeComponent(folder.coverPath!)}'
+        : null;
+
+    return MediaCard(
+      cover: _buildCover(coverUrl, folder.name),
+      title: folder.name,
+      subtitle: '${folder.fileCount} 页',
+      isFavorite: folder.isBookmarked,
+      onTap: () => _openReader(folder),
+      onLongPress: () => _showFolderContextMenu(folder),
+    );
+  }
+
+  Widget _buildCover(String? coverUrl, String name) {
+    if (coverUrl != null) {
+      return CachedNetworkImage(
+        imageUrl: coverUrl,
+        fit: BoxFit.cover,
+        memCacheWidth: 300,
+        placeholder: (_, _) => _buildCoverPlaceholder(name),
+        errorWidget: (_, _, _) => _buildCoverPlaceholder(name),
+      );
+    }
+    return _buildCoverPlaceholder(name);
+  }
+
+  Widget _buildCoverPlaceholder(String name) {
+    return Container(
+      color: AppColors.coverPlaceholder,
+      padding: const EdgeInsets.all(12),
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.menu_book_outlined,
+            size: 36,
+            color: AppColors.textSecondary,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            name,
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 12,
+            ),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }
@@ -351,13 +425,13 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
   String _getEmptyMessage(ViewMode mode) {
     switch (mode) {
       case ViewMode.folders:
-        return 'Select a folder from the tree to browse';
+        return '从左侧文件夹树选择目录浏览';
       case ViewMode.favorites:
-        return 'No favorites yet. Long press a folder to add.';
+        return '暂无收藏，长按卡片即可收藏';
       case ViewMode.history:
-        return 'No browse history yet';
+        return '暂无浏览历史';
       case ViewMode.downloads:
-        return 'No download history yet';
+        return '暂无下载历史';
     }
   }
 
@@ -374,223 +448,58 @@ class _BookBrowserPageState extends State<BookBrowserPage> {
     }
   }
 
-  void _showFolderContextMenu(BuildContext context, FolderInfo folder) {
+  void _showFolderContextMenu(FolderInfo folder) {
     final appState = context.read<AppState>();
+    final isHistoryMode = appState.viewMode == ViewMode.history;
     showModalBottomSheet(
       context: context,
-      builder: (ctx) {
+      backgroundColor: AppColors.surfaceHigh,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  folder.name,
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
               ListTile(
                 leading: const Icon(Icons.favorite_border),
-                title: const Text('Toggle Favorite'),
+                title: const Text('收藏 / 取消收藏'),
                 onTap: () async {
-                  Navigator.of(ctx).pop();
+                  Navigator.of(sheetContext).pop();
                   await appState.toggleFavorite(folder.fullPath);
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Favorite toggled')),
+                      const SnackBar(content: Text('收藏状态已更新')),
                     );
                   }
                 },
               ),
-              ListTile(
-                leading: const Icon(Icons.delete_outline),
-                title: const Text('Remove from History'),
-                onTap: () {
-                  Navigator.of(ctx).pop();
-                },
-              ),
+              if (isHistoryMode)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline),
+                  title: const Text('从历史中删除'),
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await appState.removeBrowseHistoryByPath(folder.fullPath);
+                  },
+                ),
             ],
           ),
         );
       },
-    );
-  }
-}
-
-/// Drawer tree node for phone layout
-class _DrawerTreeNode extends StatefulWidget {
-  final FolderTreeNode node;
-  final int level;
-  final VoidCallback onClose;
-
-  const _DrawerTreeNode({
-    required this.node,
-    required this.level,
-    required this.onClose,
-  });
-
-  @override
-  State<_DrawerTreeNode> createState() => _DrawerTreeNodeState();
-}
-
-class _DrawerTreeNodeState extends State<_DrawerTreeNode> {
-  @override
-  Widget build(BuildContext context) {
-    final appState = context.watch<AppState>();
-    final isSelected = appState.selectedTreePath == widget.node.fullPath;
-    final hasChildren = !widget.node.isLeaf;
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        ListTile(
-          dense: true,
-          contentPadding: EdgeInsets.only(
-            left: 8.0 + (widget.level * 16.0),
-            right: 8,
-          ),
-          selected: isSelected,
-          leading: hasChildren
-              ? SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: widget.node.isLoading
-                      ? const Padding(
-                          padding: EdgeInsets.all(4),
-                          child: CircularProgressIndicator(strokeWidth: 1.5),
-                        )
-                      : Icon(
-                          widget.node.isExpanded
-                              ? Icons.expand_more
-                              : Icons.chevron_right,
-                          size: 18,
-                        ),
-                )
-              : const Icon(Icons.folder, size: 18),
-          title: Text(
-            widget.node.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13),
-          ),
-          onTap: () {
-            if (hasChildren) {
-              setState(() {
-                widget.node.isExpanded = !widget.node.isExpanded;
-              });
-              if (widget.node.isExpanded && widget.node.children.isEmpty) {
-                appState.loadTreeChildren(widget.node);
-              }
-            }
-            appState.selectTreeNode(widget.node.fullPath);
-            widget.onClose();
-          },
-        ),
-        if (widget.node.isExpanded && widget.node.children.isNotEmpty)
-          ...widget.node.children.map(
-            (child) => _DrawerTreeNode(
-              node: child,
-              level: widget.level + 1,
-              onClose: widget.onClose,
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-/// Folder card widget for grid display with memory-optimized images
-class _FolderCard extends StatelessWidget {
-  final FolderInfo folder;
-  final VoidCallback onTap;
-  final VoidCallback onLongPress;
-  final String baseUrl;
-
-  const _FolderCard({
-    required this.folder,
-    required this.onTap,
-    required this.onLongPress,
-    required this.baseUrl,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final coverUrl = folder.coverPath != null && folder.coverPath!.isNotEmpty
-        ? '$baseUrl/api/file?path=${Uri.encodeComponent(folder.coverPath!)}'
-        : null;
-
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        onLongPress: onLongPress,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: coverUrl != null
-                  ? CachedNetworkImage(
-                      imageUrl: coverUrl,
-                      fit: BoxFit.cover,
-                      memCacheWidth: 200,
-                      placeholder: (_, __) => Container(
-                        color: Colors.grey[200],
-                        child: const Center(
-                          child: Icon(
-                            Icons.folder,
-                            size: 40,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ),
-                      errorWidget: (_, __, ___) => Container(
-                        color: Colors.grey[200],
-                        child: const Center(
-                          child: Icon(
-                            Icons.broken_image,
-                            size: 40,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ),
-                    )
-                  : Container(
-                      color: Colors.grey[200],
-                      child: const Center(
-                        child: Icon(Icons.folder, size: 40, color: Colors.grey),
-                      ),
-                    ),
-            ),
-            Container(
-              padding: const EdgeInsets.all(6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    folder.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Text(
-                        '${folder.fileCount} pages',
-                        style: TextStyle(fontSize: 10, color: Colors.grey[600]),
-                      ),
-                      const Spacer(),
-                      if (folder.isBookmarked)
-                        const Icon(
-                          Icons.bookmark,
-                          color: Colors.amber,
-                          size: 14,
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

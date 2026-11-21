@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:photo_view/photo_view.dart';
@@ -19,6 +20,7 @@ class ComicReaderPage extends StatefulWidget {
 
 class _ComicReaderPageState extends State<ComicReaderPage> {
   final PageController _pageController = PageController();
+  final FocusNode _focusNode = FocusNode();
   List<FileInfo> _imageFiles = [];
   int _currentPage = 0;
   bool _isLoading = true;
@@ -39,8 +41,30 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
 
   @override
   void dispose() {
+    _focusNode.dispose();
     _pageController.dispose();
     super.dispose();
+  }
+
+  /// 键盘 / 遥控器按键：←→ 翻页，OK/回车/空格 呼出菜单
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      _goToPreviousPage();
+      return KeyEventResult.handled;
+    } else if (key == LogicalKeyboardKey.arrowRight) {
+      _goToNextPage();
+      return KeyEventResult.handled;
+    } else if (key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.space) {
+      _toggleControls();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   Future<void> _loadFiles() async {
@@ -115,12 +139,17 @@ class _ComicReaderPageState extends State<ComicReaderPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          _buildContent(),
-          if (_showControls) _buildTopBar(),
-          if (_showControls && _imageFiles.isNotEmpty) _buildBottomBar(),
-        ],
+      body: Focus(
+        focusNode: _focusNode,
+        onKeyEvent: _onKey,
+        autofocus: true,
+        child: Stack(
+          children: [
+            _buildContent(),
+            if (_showControls) _buildTopBar(),
+            if (_showControls && _imageFiles.isNotEmpty) _buildBottomBar(),
+          ],
+        ),
       ),
     );
   }
@@ -343,7 +372,7 @@ class _ImageViewerState extends State<_ImageViewer> {
           ),
         );
       },
-      errorBuilder: (_, __, ___) {
+      errorBuilder: (_, _, _) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) setState(() => _hasError = true);
         });

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:media_kit/media_kit.dart';
 import 'core/state/app_state.dart';
+import 'core/theme/app_theme.dart';
 import 'features/discovery/server_discovery_page.dart';
 
 void main() {
@@ -20,17 +21,7 @@ class ComicReaderApp extends StatelessWidget {
       child: MaterialApp(
         title: 'Comic Reader',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorSchemeSeed: Colors.indigo,
-          useMaterial3: true,
-          brightness: Brightness.light,
-        ),
-        darkTheme: ThemeData(
-          colorSchemeSeed: Colors.indigo,
-          useMaterial3: true,
-          brightness: Brightness.dark,
-        ),
-        themeMode: ThemeMode.system,
+        theme: buildAppTheme(),
         home: const ServerDiscoveryPage(),
       ),
     );

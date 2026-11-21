@@ -28,6 +28,10 @@ dependencies:
   media_kit_libs_video: ^1.0.0
   # 屏幕常亮
   wakelock_plus: ^1.2.0
+  # 图片处理（缩略图压缩）
+  image: ^4.0.0
+  # 视频封面磁盘缓存所需哈希
+  crypto: ^3.0.7
 
 dev_dependencies:
   flutter_test:

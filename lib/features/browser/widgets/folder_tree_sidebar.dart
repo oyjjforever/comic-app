@@ -1,185 +1,313 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../../core/state/app_state.dart';
 
-/// Folder tree sidebar widget - displays hierarchical folder tree
-/// with lazy-loaded children and folder selection
-class FolderTreeSidebar extends StatelessWidget {
-  const FolderTreeSidebar({super.key});
+import '../../../core/state/app_state.dart';
+import '../../../core/theme/app_theme.dart';
+
+/// 文件夹树视图（漫画/视频共用）
+///
+/// - 侧栏（大屏）与抽屉（手机）两种场景复用
+/// - 懒加载子节点（点击展开时请求）
+/// - 整树只 watch 一次 AppState（节点不各自订阅，避免无关通知全树重建）
+class FolderTreeView extends StatefulWidget {
+  const FolderTreeView({
+    super.key,
+    required this.title,
+    this.onNodeSelected,
+  });
+
+  /// 侧栏标题
+  final String title;
+
+  /// 选中节点后的回调（抽屉场景用于关闭抽屉）
+  final VoidCallback? onNodeSelected;
 
   @override
+  State<FolderTreeView> createState() => _FolderTreeViewState();
+}
+
+class _FolderTreeViewState extends State<FolderTreeView> {
+  @override
   Widget build(BuildContext context) {
+    // 单点监听：树节点、选中路径、加载态
     final appState = context.watch<AppState>();
     final nodes = appState.treeNodes;
 
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(
-          right: BorderSide(color: Theme.of(context).dividerColor, width: 1),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Row(
-              children: [
-                const Icon(Icons.folder_open, size: 18),
-                const SizedBox(width: 8),
-                Text(
-                  'Folder Tree',
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          // Tree content
-          Expanded(
-            child: appState.isTreeLoading && nodes.isEmpty
-                ? const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(20),
-                      child: CircularProgressIndicator(),
-                    ),
-                  )
-                : nodes.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Text(
-                        'No folders found',
-                        style: TextStyle(color: Colors.grey[500]),
-                      ),
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.only(top: 4),
-                    itemCount: nodes.length,
-                    itemBuilder: (context, index) {
-                      return _TreeNodeWidget(node: nodes[index], level: 0);
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Single tree node widget - supports expand/collapse with lazy loading
-class _TreeNodeWidget extends StatefulWidget {
-  final FolderTreeNode node;
-  final int level;
-
-  const _TreeNodeWidget({required this.node, required this.level});
-
-  @override
-  State<_TreeNodeWidget> createState() => _TreeNodeWidgetState();
-}
-
-class _TreeNodeWidgetState extends State<_TreeNodeWidget> {
-  @override
-  Widget build(BuildContext context) {
-    final appState = context.watch<AppState>();
-    final isSelected = appState.selectedTreePath == widget.node.fullPath;
-    final hasChildren = !widget.node.isLeaf;
-
     return Column(
-      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Node row
-        InkWell(
-          onTap: () => _onTap(context),
-          child: Container(
-            padding: EdgeInsets.only(
-              left: 8.0 + (widget.level * 16.0),
-              right: 8,
-              top: 6,
-              bottom: 6,
-            ),
-            decoration: BoxDecoration(
-              color: isSelected
-                  ? Theme.of(context).colorScheme.primaryContainer
-                  : null,
-            ),
-            child: Row(
-              children: [
-                // Expand/collapse icon
-                if (hasChildren)
-                  SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: widget.node.isLoading
-                        ? const Padding(
-                            padding: EdgeInsets.all(4),
-                            child: CircularProgressIndicator(strokeWidth: 1.5),
-                          )
-                        : Icon(
-                            widget.node.isExpanded
-                                ? Icons.expand_more
-                                : Icons.chevron_right,
-                            size: 18,
-                          ),
-                  )
-                else
-                  const SizedBox(width: 20),
-                const SizedBox(width: 4),
-                // Folder icon
-                Icon(
-                  widget.node.isExpanded && hasChildren
-                      ? Icons.folder_open
-                      : Icons.folder,
-                  size: 18,
-                  color: isSelected
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).iconTheme.color,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+          child: Row(
+            children: [
+              const Icon(Icons.folder_open, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                widget.title,
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1,
                 ),
-                const SizedBox(width: 8),
-                // Folder name
-                Expanded(
-                  child: Text(
-                    widget.node.name,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: isSelected
-                          ? FontWeight.w600
-                          : FontWeight.normal,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
-        // Children (expanded)
-        if (widget.node.isExpanded && widget.node.children.isNotEmpty)
-          ...widget.node.children.map(
-            (child) => _TreeNodeWidget(node: child, level: widget.level + 1),
-          ),
+        Divider(
+          height: 1,
+          color: Theme.of(context).dividerColor,
+        ),
+        Expanded(
+          child: appState.isTreeLoading && nodes.isEmpty
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : nodes.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Text(
+                      '暂无文件夹',
+                      style: TextStyle(color: AppColors.textSecondary),
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.only(top: 4, bottom: 8),
+                  itemCount: nodes.length,
+                  itemBuilder: (context, index) {
+                    return _TreeNodeItem(
+                      node: nodes[index],
+                      level: 0,
+                      selectedPath: appState.selectedTreePath,
+                      onTap: _onNodeTap,
+                    );
+                  },
+                ),
+        ),
       ],
     );
   }
 
-  void _onTap(BuildContext context) {
+  /// 展开/收起 + 懒加载 + 选中
+  void _onNodeTap(FolderTreeNode node) {
     final appState = context.read<AppState>();
-
-    if (!widget.node.isLeaf) {
-      // Toggle expand/collapse for non-leaf nodes
+    if (!node.isLeaf) {
       setState(() {
-        widget.node.isExpanded = !widget.node.isExpanded;
+        node.isExpanded = !node.isExpanded;
       });
-      // Lazy load children if not loaded yet
-      if (widget.node.isExpanded && widget.node.children.isEmpty) {
-        appState.loadTreeChildren(widget.node);
+      if (node.isExpanded && node.children.isEmpty) {
+        appState.loadTreeChildren(node);
       }
     }
+    appState.selectTreeNode(node.fullPath);
+    widget.onNodeSelected?.call();
+  }
+}
 
-    // Select this node and load its contents
-    appState.selectTreeNode(widget.node.fullPath);
+/// 视频文件夹树视图（结构同 FolderTreeView，绑定视频树状态）
+class VideoFolderTreeView extends StatefulWidget {
+  const VideoFolderTreeView({
+    super.key,
+    required this.title,
+    this.onNodeSelected,
+  });
+
+  final String title;
+  final VoidCallback? onNodeSelected;
+
+  @override
+  State<VideoFolderTreeView> createState() => _VideoFolderTreeViewState();
+}
+
+class _VideoFolderTreeViewState extends State<VideoFolderTreeView> {
+  @override
+  Widget build(BuildContext context) {
+    final appState = context.watch<AppState>();
+    final nodes = appState.videoTreeNodes;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+          child: Row(
+            children: [
+              const Icon(Icons.video_library, size: 16),
+              const SizedBox(width: 8),
+              Text(
+                widget.title,
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Divider(
+          height: 1,
+          color: Theme.of(context).dividerColor,
+        ),
+        Expanded(
+          child: appState.isVideoTreeLoading && nodes.isEmpty
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : nodes.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Text(
+                      '暂无文件夹',
+                      style: TextStyle(color: AppColors.textSecondary),
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.only(top: 4, bottom: 8),
+                  itemCount: nodes.length,
+                  itemBuilder: (context, index) {
+                    return _TreeNodeItem(
+                      node: nodes[index],
+                      level: 0,
+                      selectedPath: appState.selectedVideoTreePath,
+                      onTap: _onNodeTap,
+                      isVideo: true,
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  void _onNodeTap(FolderTreeNode node) {
+    final appState = context.read<AppState>();
+    if (!node.isLeaf) {
+      setState(() {
+        node.isExpanded = !node.isExpanded;
+      });
+      if (node.isExpanded && node.children.isEmpty) {
+        appState.loadVideoTreeChildren(node);
+      }
+    }
+    appState.selectVideoTreeNode(node.fullPath);
+    widget.onNodeSelected?.call();
+  }
+}
+
+/// 树节点行（含递归子节点）
+class _TreeNodeItem extends StatelessWidget {
+  const _TreeNodeItem({
+    required this.node,
+    required this.level,
+    required this.selectedPath,
+    required this.onTap,
+    this.isVideo = false,
+  });
+
+  final FolderTreeNode node;
+  final int level;
+  final String? selectedPath;
+  final void Function(FolderTreeNode node) onTap;
+  final bool isVideo;
+
+  @override
+  Widget build(BuildContext context) {
+    final isSelected = selectedPath == node.fullPath;
+    final hasChildren = !node.isLeaf;
+    final folderIcon = isVideo ? Icons.videocam : Icons.folder;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(left: 8.0 + (level * 14.0), right: 8),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => onTap(node),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? AppColors.accent.withValues(alpha: 0.14)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  if (hasChildren)
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: node.isLoading
+                          ? const Padding(
+                              padding: EdgeInsets.all(3),
+                              child: CircularProgressIndicator(strokeWidth: 1.5),
+                            )
+                          : Icon(
+                              node.isExpanded
+                                  ? Icons.expand_more
+                                  : Icons.chevron_right,
+                              size: 18,
+                              color: AppColors.textSecondary,
+                            ),
+                    )
+                  else
+                    const SizedBox(width: 18),
+                  const SizedBox(width: 6),
+                  Icon(
+                    hasChildren && node.isExpanded
+                        ? Icons.folder_open
+                        : folderIcon,
+                    size: 16,
+                    color: isSelected
+                        ? AppColors.accent
+                        : AppColors.textSecondary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      node.name,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: isSelected
+                            ? AppColors.accent
+                            : AppColors.textPrimary,
+                        fontWeight: isSelected
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (node.isExpanded && node.children.isNotEmpty)
+          ...node.children.map(
+            (child) => _TreeNodeItem(
+              node: child,
+              level: level + 1,
+              selectedPath: selectedPath,
+              onTap: onTap,
+              isVideo: isVideo,
+            ),
+          ),
+      ],
+    );
   }
 }

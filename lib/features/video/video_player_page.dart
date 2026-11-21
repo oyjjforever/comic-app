@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -5,6 +7,8 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../core/models/file_info.dart';
 
+/// 视频播放页
+/// 支持触屏操作、键盘与 TV 遥控器（D-pad）操作
 class VideoPlayerPage extends StatefulWidget {
   final FileInfo videoFile;
   final String baseUrl;
@@ -22,6 +26,11 @@ class VideoPlayerPage extends StatefulWidget {
 class _VideoPlayerPageState extends State<VideoPlayerPage> {
   late final Player _player;
   late final VideoController _controller;
+  final FocusNode _focusNode = FocusNode();
+
+  /// stream 订阅列表，dispose 时统一 cancel（避免泄漏持有 State）
+  final List<StreamSubscription<dynamic>> _subscriptions = [];
+
   bool _showControls = true;
   bool _isPlaying = false;
   bool _isBuffering = false;
@@ -29,11 +38,19 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   Duration _duration = Duration.zero;
   double _playbackSpeed = 1.0;
   bool _isFullscreen = false;
+  double _volume = 100;
+
+  /// 进度条拖动中的本地值（null 表示未拖动）
+  double? _dragValue;
+
+  /// 位置流节流：上次因 position 变化触发 setState 的时间
+  DateTime _lastPositionNotify = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
     super.initState();
     _initPlayer();
+    _focusNode.requestFocus();
   }
 
   void _initPlayer() {
@@ -52,43 +69,66 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     _player.open(Media(videoUrl));
 
     // Listen to player state changes
-    _player.stream.playing.listen((playing) {
-      if (mounted) {
-        setState(() {
-          _isPlaying = playing;
-        });
-      }
-    });
+    _subscriptions.add(
+      _player.stream.playing.listen((playing) {
+        if (mounted) {
+          setState(() {
+            _isPlaying = playing;
+          });
+        }
+      }),
+    );
 
-    _player.stream.position.listen((position) {
-      if (mounted) {
-        setState(() {
-          _position = position;
-        });
-      }
-    });
+    _subscriptions.add(
+      _player.stream.position.listen((position) {
+        // 节流：播放中每 250ms 刷新一次 UI 即可，避免整页每 tick 重建
+        _position = position;
+        final now = DateTime.now();
+        if (mounted &&
+            now.difference(_lastPositionNotify) >= const Duration(milliseconds: 250)) {
+          _lastPositionNotify = now;
+          setState(() {});
+        }
+      }),
+    );
 
-    _player.stream.duration.listen((duration) {
-      if (mounted) {
-        setState(() {
-          _duration = duration;
-        });
-      }
-    });
+    _subscriptions.add(
+      _player.stream.duration.listen((duration) {
+        if (mounted) {
+          setState(() {
+            _duration = duration;
+          });
+        }
+      }),
+    );
 
-    _player.stream.buffering.listen((buffering) {
-      if (mounted) {
-        setState(() {
-          _isBuffering = buffering;
-        });
-      }
-    });
+    _subscriptions.add(
+      _player.stream.buffering.listen((buffering) {
+        if (mounted) {
+          setState(() {
+            _isBuffering = buffering;
+          });
+        }
+      }),
+    );
 
-    _player.stream.completed.listen((completed) {
-      if (completed) {
-        WakelockPlus.disable();
-      }
-    });
+    _subscriptions.add(
+      _player.stream.completed.listen((completed) {
+        if (completed) {
+          WakelockPlus.disable();
+        }
+      }),
+    );
+
+    _subscriptions.add(
+      _player.stream.volume.listen((volume) {
+        if (mounted) {
+          setState(() {
+            _volume = volume;
+          });
+        }
+      }),
+    );
 
     // Keep screen awake while playing
     WakelockPlus.enable();
@@ -96,8 +136,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 
   @override
   void dispose() {
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
+    _subscriptions.clear();
+    _focusNode.dispose();
     _player.dispose();
     WakelockPlus.disable();
+    if (_isFullscreen) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
     super.dispose();
   }
 
@@ -121,6 +169,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     _player.seek(position);
   }
 
+  void _toggleControls() {
+    setState(() {
+      _showControls = !_showControls;
+    });
+  }
+
   void _toggleFullscreen() {
     setState(() {
       _isFullscreen = !_isFullscreen;
@@ -133,12 +187,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       ]);
     } else {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      SystemChrome.setPreferredOrientations([
-        DeviceOrientation.portraitUp,
-        DeviceOrientation.portraitDown,
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
+      // 恢复全部方向，避免平板/TV 上被锁竖屏
+      SystemChrome.setPreferredOrientations([]);
     }
   }
 
@@ -160,6 +210,47 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       ),
     );
     _seekTo(clampedPosition);
+    setState(() {});
+  }
+
+  void _adjustVolume(double delta) {
+    final newVolume = (_volume + delta).clamp(0.0, 100.0);
+    _player.setVolume(newVolume);
+  }
+
+  /// 键盘 / 遥控器按键处理
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.mediaRewind) {
+      _seekRelative(const Duration(seconds: -10));
+      return KeyEventResult.handled;
+    } else if (key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.mediaFastForward) {
+      _seekRelative(const Duration(seconds: 10));
+      return KeyEventResult.handled;
+    } else if (key == LogicalKeyboardKey.arrowUp) {
+      _adjustVolume(5);
+      return KeyEventResult.handled;
+    } else if (key == LogicalKeyboardKey.arrowDown) {
+      _adjustVolume(-5);
+      return KeyEventResult.handled;
+    } else if (key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.space) {
+      _togglePlayPause();
+      return KeyEventResult.handled;
+    } else if (key == LogicalKeyboardKey.escape) {
+      if (_isFullscreen) {
+        _toggleFullscreen();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+    return KeyEventResult.ignored;
   }
 
   @override
@@ -177,39 +268,40 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
               backgroundColor: Colors.black,
               foregroundColor: Colors.white,
             ),
-      body: Column(
-        children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: () {
-                setState(() {
-                  _showControls = !_showControls;
-                });
-              },
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  // Video display
-                  Video(
-                    controller: _controller,
-                    fit: BoxFit.contain,
-                  ),
-                  // Buffering indicator
-                  if (_isBuffering)
-                    const CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 3,
+      body: Focus(
+        focusNode: _focusNode,
+        onKeyEvent: _onKey,
+        autofocus: true,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _toggleControls,
+          child: Column(
+            children: [
+              Expanded(
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Video display
+                    Video(
+                      controller: _controller,
+                      fit: BoxFit.contain,
                     ),
-                  // Controls overlay
-                  if (_showControls)
-                    _buildControlsOverlay(context),
-                ],
+                    // Buffering indicator
+                    if (_isBuffering)
+                      const CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 3,
+                      ),
+                    // Controls overlay
+                    if (_showControls) _buildControlsOverlay(context),
+                  ],
+                ),
               ),
-            ),
+              // Bottom controls bar
+              if (_showControls) _buildBottomControls(),
+            ],
           ),
-          // Bottom controls bar
-          if (_showControls) _buildBottomControls(),
-        ],
+        ),
       ),
     );
   }
@@ -236,8 +328,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           ),
           // Forward 10s
           IconButton(
-            icon:
-                const Icon(Icons.forward_10, color: Colors.white, size: 36),
+            icon: const Icon(Icons.forward_10, color: Colors.white, size: 36),
             onPressed: () => _seekRelative(const Duration(seconds: 10)),
           ),
         ],
@@ -246,6 +337,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   }
 
   Widget _buildBottomControls() {
+    // 拖动中显示本地值，避免每帧 seek 造成网络请求风暴
+    final double sliderValue = _dragValue ??
+        (_duration.inMilliseconds > 0
+            ? _position.inMilliseconds / _duration.inMilliseconds
+            : 0.0);
+
     return Container(
       color: Colors.black87,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -256,20 +353,32 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           Row(
             children: [
               Text(
-                _formatDuration(_position),
+                _formatDuration(
+                  Duration(
+                    milliseconds:
+                        (sliderValue * _duration.inMilliseconds).round(),
+                  ),
+                ),
                 style: const TextStyle(color: Colors.white, fontSize: 12),
               ),
               Expanded(
                 child: Slider(
-                  value: _duration.inMilliseconds > 0
-                      ? _position.inMilliseconds /
-                          _duration.inMilliseconds.toDouble()
-                      : 0,
+                  value: sliderValue.clamp(0.0, 1.0),
                   onChanged: (value) {
+                    setState(() {
+                      _dragValue = value;
+                    });
+                  },
+                  onChangeStart: (value) {
+                    setState(() {
+                      _dragValue = value;
+                    });
+                  },
+                  onChangeEnd: (value) {
                     final newPosition = Duration(
-                      milliseconds:
-                          (value * _duration.inMilliseconds).round(),
+                      milliseconds: (value * _duration.inMilliseconds).round(),
                     );
+                    _dragValue = null;
                     _seekTo(newPosition);
                   },
                   activeColor: Theme.of(context).colorScheme.primary,

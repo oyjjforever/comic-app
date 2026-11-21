@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/server_info.dart';
 import '../models/folder_info.dart';
 import '../models/file_info.dart';
@@ -6,6 +7,7 @@ import '../models/favorite_info.dart';
 import '../models/history_info.dart';
 import '../network/api_client.dart';
 import '../network/server_discovery.dart';
+import '../services/video_thumbnail_service.dart';
 
 /// 视图模式
 enum ViewMode { folders, favorites, history, downloads }
@@ -15,6 +17,9 @@ enum VideoViewMode { folders, favorites, history }
 
 /// 应用全局状态管理
 class AppState extends ChangeNotifier {
+  static const String _lastServerIpKey = 'last_server_ip';
+  static const String _lastServerPortKey = 'last_server_port';
+
   ServerInfo? _connectedServer;
   ApiClient? _apiClient;
   final ServerDiscovery _discovery = ServerDiscovery();
@@ -117,21 +122,52 @@ class AppState extends ChangeNotifier {
   // 侧边栏 Getter
   bool get isSidebarExpanded => _isSidebarExpanded;
 
+  /// 读取上次成功连接的服务器（无记录返回 null）
+  static Future<ServerInfo?> getLastServer() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final ip = prefs.getString(_lastServerIpKey);
+      final port = prefs.getInt(_lastServerPortKey);
+      if (ip == null || ip.isEmpty || port == null) return null;
+      return ServerInfo(name: 'Comic Reader', hostname: ip, ip: ip, port: port);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 持久化上次成功连接的服务器
+  static Future<void> _saveLastServer(ServerInfo server) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_lastServerIpKey, server.ip);
+      await prefs.setInt(_lastServerPortKey, server.port);
+    } catch (_) {
+      // 持久化失败不影响连接流程
+    }
+  }
+
   /// 连接到服务器
-  Future<bool> connectToServer(ServerInfo server) async {
+  /// [timeout] 连接测试超时（重连上次服务器时可缩短）
+  Future<bool> connectToServer(
+    ServerInfo server, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
       final client = ApiClient(baseUrl: server.baseUrl);
-      final connected = await client.testConnection();
+      final connected = await client.testConnection(timeout: timeout);
       if (connected) {
         // 获取完整的服务器信息（包含 resourcePath、videoResourcePath 等）
         final fullServerInfo = await client.getServerInfo();
         _connectedServer = fullServerInfo ?? server;
         _apiClient = client;
         _isLoading = false;
+        _saveLastServer(_connectedServer!);
+        // 服务器可能更换，重置视频封面接口探测状态
+        VideoThumbnailService.instance.resetServerCoverSupport();
         notifyListeners();
         return true;
       } else {
@@ -141,27 +177,17 @@ class AppState extends ChangeNotifier {
         return false;
       }
     } catch (e) {
-      _errorMessage = '连接失败: $e';
+      _errorMessage = '连接服务器失败，请确认电脑端已启动并处于同一局域网';
       _isLoading = false;
       notifyListeners();
       return false;
     }
   }
 
-  /// 通过 IP 地址手动连接
-  Future<bool> connectByIp(String ip, {int port = 9527}) async {
-    final server = ServerInfo(
-      name: 'Comic Reader',
-      hostname: ip,
-      ip: ip,
-      port: port,
-    );
-    return connectToServer(server);
-  }
-
   /// 断开连接
   void disconnect() {
     _connectedServer = null;
+    _apiClient?.close();
     _apiClient = null;
     _folders = [];
     _files = [];
@@ -255,8 +281,9 @@ class AppState extends ChangeNotifier {
 
   /// 懒加载树的子节点
   Future<void> loadTreeChildren(FolderTreeNode node) async {
-    if (_apiClient == null || node.isLoading || node.children.isNotEmpty)
+    if (_apiClient == null || node.isLoading || node.children.isNotEmpty) {
       return;
+    }
     node.isLoading = true;
     notifyListeners();
 
@@ -389,26 +416,17 @@ class AppState extends ChangeNotifier {
 
     try {
       _favorites = await _apiClient!.getFavorites(module: 'book');
-      // 将收藏转换为 FolderInfo 列表（获取每个收藏的详细信息）
-      final folderInfoList = <FolderInfo>[];
-      for (final fav in _favorites) {
-        try {
-          final info = await _apiClient!.getFolderInfo(fav.fullPath);
-          folderInfoList.add(info);
-        } catch (_) {
-          // 获取详细信息失败，使用基本信息
-          final pathParts = fav.fullPath.split(RegExp(r'[/\\]'));
-          final name = pathParts.isNotEmpty ? pathParts.last : fav.fullPath;
-          folderInfoList.add(
-            FolderInfo(
-              name: name ?? '',
-              fullPath: fav.fullPath,
-              isBookmarked: true,
-            ),
-          );
-        }
-      }
-      _favoriteFolders = folderInfoList;
+      // 并发获取每个收藏的详细信息（限并发，避免串行等待）
+      _favoriteFolders = await _mapLimited<FavoriteInfo, FolderInfo>(
+        _favorites,
+        (fav) async {
+          try {
+            return await _apiClient!.getFolderInfo(fav.fullPath);
+          } catch (_) {
+            return _fallbackFolderInfo(fav.fullPath, bookmarked: true);
+          }
+        },
+      );
       _isLoading = false;
       notifyListeners();
     } catch (e) {
@@ -422,7 +440,7 @@ class AppState extends ChangeNotifier {
   Future<void> toggleFavorite(String fullPath) async {
     if (_apiClient == null) return;
     try {
-      final result = await _apiClient!.toggleFavorite(fullPath, 'book');
+      await _apiClient!.toggleFavorite(fullPath, 'book');
       // 刷新收藏列表
       if (_viewMode == ViewMode.favorites) {
         await loadFavorites();
@@ -458,20 +476,16 @@ class AppState extends ChangeNotifier {
         limit: 100,
         module: 'book',
       );
-      final folderInfoList = <FolderInfo>[];
-      for (final record in _browseHistory) {
-        try {
-          final info = await _apiClient!.getFolderInfo(record.fullPath);
-          folderInfoList.add(info);
-        } catch (_) {
-          final pathParts = record.fullPath.split(RegExp(r'[/\\]'));
-          final name = pathParts.isNotEmpty ? pathParts.last : record.fullPath;
-          folderInfoList.add(
-            FolderInfo(name: name ?? '', fullPath: record.fullPath),
-          );
-        }
-      }
-      _browseHistoryFolders = folderInfoList;
+      _browseHistoryFolders = await _mapLimited<HistoryInfo, FolderInfo>(
+        _browseHistory,
+        (record) async {
+          try {
+            return await _apiClient!.getFolderInfo(record.fullPath);
+          } catch (_) {
+            return _fallbackFolderInfo(record.fullPath);
+          }
+        },
+      );
       _isLoading = false;
       notifyListeners();
     } catch (e) {
@@ -491,6 +505,26 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 按路径删除一条浏览历史并同步列表
+  Future<void> removeBrowseHistoryByPath(String fullPath) async {
+    if (_apiClient == null) return;
+    final record = _browseHistory
+        .where((h) => h.fullPath == fullPath)
+        .firstOrNull;
+    if (record == null) return;
+    try {
+      if (record.id != null) {
+        await _apiClient!.deleteBrowseHistory(record.id!);
+      }
+      _browseHistory.remove(record);
+      _browseHistoryFolders.removeWhere((f) => f.fullPath == fullPath);
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = '删除历史记录失败: $e';
+      notifyListeners();
+    }
+  }
+
   // ==================== 下载历史 ====================
 
   /// 加载下载历史
@@ -505,20 +539,16 @@ class AppState extends ChangeNotifier {
         limit: 100,
         module: 'book',
       );
-      final folderInfoList = <FolderInfo>[];
-      for (final record in _downloadHistory) {
-        try {
-          final info = await _apiClient!.getFolderInfo(record.fullPath);
-          folderInfoList.add(info);
-        } catch (_) {
-          final pathParts = record.fullPath.split(RegExp(r'[/\\]'));
-          final name = pathParts.isNotEmpty ? pathParts.last : record.fullPath;
-          folderInfoList.add(
-            FolderInfo(name: name ?? '', fullPath: record.fullPath),
-          );
-        }
-      }
-      _downloadHistoryFolders = folderInfoList;
+      _downloadHistoryFolders = await _mapLimited<HistoryInfo, FolderInfo>(
+        _downloadHistory,
+        (record) async {
+          try {
+            return await _apiClient!.getFolderInfo(record.fullPath);
+          } catch (_) {
+            return _fallbackFolderInfo(record.fullPath);
+          }
+        },
+      );
       _isLoading = false;
       notifyListeners();
     } catch (e) {
@@ -544,6 +574,33 @@ class AppState extends ChangeNotifier {
   void clearError() {
     _errorMessage = null;
     notifyListeners();
+  }
+
+  // ==================== 辅助方法 ====================
+
+  /// 并发受限地映射列表（避免 N+1 串行请求拖慢加载）
+  Future<List<R>> _mapLimited<T, R>(
+    List<T> items,
+    Future<R> Function(T) convert,
+  ) async {
+    const limit = 8;
+    final results = <R>[];
+    for (var i = 0; i < items.length; i += limit) {
+      final chunk = items.skip(i).take(limit);
+      results.addAll(await Future.wait(chunk.map(convert)));
+    }
+    return results;
+  }
+
+  /// 从路径提取名称构造基本 FolderInfo（详情请求失败时的兜底）
+  FolderInfo _fallbackFolderInfo(String fullPath, {bool bookmarked = false}) {
+    final pathParts = fullPath.split(RegExp(r'[/\\]'));
+    final name = pathParts.isNotEmpty ? pathParts.last : fullPath;
+    return FolderInfo(
+      name: name,
+      fullPath: fullPath,
+      isBookmarked: bookmarked,
+    );
   }
 
   // ==================== 视频浏览 ====================
@@ -579,8 +636,9 @@ class AppState extends ChangeNotifier {
 
   /// 懒加载视频树子节点
   Future<void> loadVideoTreeChildren(FolderTreeNode node) async {
-    if (_apiClient == null || node.isLoading || node.children.isNotEmpty)
+    if (_apiClient == null || node.isLoading || node.children.isNotEmpty) {
       return;
+    }
     node.isLoading = true;
     notifyListeners();
 
