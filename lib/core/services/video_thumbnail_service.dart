@@ -264,8 +264,8 @@ class VideoThumbnailService {
       await nativePlayer.setProperty('hwdec', 'no');
       await nativePlayer.setProperty('ao', 'null');
       await nativePlayer.setProperty('vf', 'scale=$_thumbnailWidth:-2');
-      await nativePlayer.setProperty('demuxer-max-bytes', '100MiB');
-      await nativePlayer.setProperty('demuxer-max-back-bytes', '50MiB');
+      await nativePlayer.setProperty('demuxer-max-bytes', '30MiB');
+      await nativePlayer.setProperty('demuxer-max-back-bytes', '10MiB');
       await nativePlayer.setProperty('demuxer-lavf-o', 'fflags=+ignidx');
 
       _pool.add(_PooledPlayer(player));
@@ -599,8 +599,8 @@ class VideoThumbnailService {
     await nativePlayer.setProperty('hwdec', 'no');
     await nativePlayer.setProperty('ao', 'null');
     await nativePlayer.setProperty('vf', 'scale=$_thumbnailWidth:-2');
-    await nativePlayer.setProperty('demuxer-max-bytes', '100MiB');
-    await nativePlayer.setProperty('demuxer-max-back-bytes', '50MiB');
+    await nativePlayer.setProperty('demuxer-max-bytes', '30MiB');
+    await nativePlayer.setProperty('demuxer-max-back-bytes', '10MiB');
     await nativePlayer.setProperty('demuxer-lavf-o', 'fflags=+ignidx');
     pp.inUse = false;
   }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/folder_info.dart';
@@ -19,6 +20,39 @@ class ApiClient {
     _httpClient.close();
   }
 
+  /// JSON API 默认超时（服务器半死时避免 UI 永久转圈）
+  static const Duration _requestTimeout = Duration(seconds: 15);
+
+  Future<http.Response> _get(Uri uri) async {
+    try {
+      return await _get(uri).timeout(_requestTimeout);
+    } on TimeoutException {
+      throw Exception('请求超时，请检查网络连接');
+    }
+  }
+
+  Future<http.Response> _post(
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+  }) async {
+    try {
+      return await _httpClient
+          .post(uri, headers: headers, body: body)
+          .timeout(_requestTimeout);
+    } on TimeoutException {
+      throw Exception('请求超时，请检查网络连接');
+    }
+  }
+
+  Future<http.Response> _delete(Uri uri) async {
+    try {
+      return await _delete(uri).timeout(_requestTimeout);
+    } on TimeoutException {
+      throw Exception('请求超时，请检查网络连接');
+    }
+  }
+
   /// 测试连接
   Future<bool> testConnection({Duration timeout = const Duration(seconds: 5)}) async {
     try {
@@ -35,7 +69,7 @@ class ApiClient {
   Future<ServerInfo?> getServerInfo() async {
     try {
       final uri = Uri.parse('$baseUrl/api/server/info');
-      final response = await _httpClient.get(uri);
+      final response = await _get(uri);
       if (response.statusCode == 200) {
         final data = _parseJson(response.body);
         return ServerInfo.fromJson(data, Uri.parse(baseUrl).host);
@@ -67,7 +101,7 @@ class ApiClient {
       '$baseUrl/api/browse/tree${queryString.isNotEmpty ? '?$queryString' : ''}',
     );
 
-    final response = await _httpClient.get(uri);
+    final response = await _get(uri);
     _checkResponse(response);
     final data = _parseJson(response.body);
     final folders = data['folders'] as List<dynamic>? ?? [];
@@ -94,7 +128,7 @@ class ApiClient {
         .join('&');
     final uri = Uri.parse('$baseUrl/api/browse/list?$queryString');
 
-    final response = await _httpClient.get(uri);
+    final response = await _get(uri);
     _checkResponse(response);
     return _parseJson(response.body);
   }
@@ -104,7 +138,7 @@ class ApiClient {
     final uri = Uri.parse(
       '$baseUrl/api/browse/files?path=${Uri.encodeComponent(path)}',
     );
-    final response = await _httpClient.get(uri);
+    final response = await _get(uri);
     _checkResponse(response);
     final data = _parseJson(response.body);
     final files = data['files'] as List<dynamic>? ?? [];
@@ -118,7 +152,7 @@ class ApiClient {
     final uri = Uri.parse(
       '$baseUrl/api/browse/info?path=${Uri.encodeComponent(path)}',
     );
-    final response = await _httpClient.get(uri);
+    final response = await _get(uri);
     _checkResponse(response);
     final data = _parseJson(response.body);
     return FolderInfo.fromJson(data);
@@ -150,7 +184,7 @@ class ApiClient {
         .join('&');
     final uri = Uri.parse('$baseUrl/api/favorites?$queryString');
 
-    final response = await _httpClient.get(uri);
+    final response = await _get(uri);
     _checkResponse(response);
     final data = _parseJson(response.body);
     final favorites = data['favorites'] as List<dynamic>? ?? [];
@@ -164,7 +198,7 @@ class ApiClient {
     final uri = Uri.parse(
       '$baseUrl/api/favorites/check?fullPath=${Uri.encodeComponent(fullPath)}&module=${Uri.encodeComponent(module)}',
     );
-    final response = await _httpClient.get(uri);
+    final response = await _get(uri);
     _checkResponse(response);
     final data = _parseJson(response.body);
     return data['isFavorited'] as bool? ?? false;
@@ -177,7 +211,7 @@ class ApiClient {
     String? tags,
   }) async {
     final uri = Uri.parse('$baseUrl/api/favorites');
-    final response = await _httpClient.post(
+    final response = await _post(
       uri,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -194,7 +228,7 @@ class ApiClient {
   /// 删除收藏 by ID
   Future<void> deleteFavorite(int id) async {
     final uri = Uri.parse('$baseUrl/api/favorites/$id');
-    final response = await _httpClient.delete(uri);
+    final response = await _delete(uri);
     _checkResponse(response);
   }
 
@@ -203,14 +237,14 @@ class ApiClient {
     final uri = Uri.parse(
       '$baseUrl/api/favorites/by-path?fullPath=${Uri.encodeComponent(fullPath)}&module=${Uri.encodeComponent(module)}',
     );
-    final response = await _httpClient.delete(uri);
+    final response = await _delete(uri);
     _checkResponse(response);
   }
 
   /// 切换收藏状态
   Future<bool> toggleFavorite(String fullPath, String module) async {
     final uri = Uri.parse('$baseUrl/api/favorites/toggle');
-    final response = await _httpClient.post(
+    final response = await _post(
       uri,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'fullPath': fullPath, 'module': module}),
@@ -232,7 +266,7 @@ class ApiClient {
     final uri = Uri.parse(
       '$baseUrl/api/favorites/clear${queryString.isNotEmpty ? '?$queryString' : ''}',
     );
-    final response = await _httpClient.delete(uri);
+    final response = await _delete(uri);
     _checkResponse(response);
   }
 
@@ -243,7 +277,7 @@ class ApiClient {
     final uri = Uri.parse(
       '$baseUrl/api/tags/folders?module=${Uri.encodeComponent(module)}',
     );
-    final response = await _httpClient.get(uri);
+    final response = await _get(uri);
     _checkResponse(response);
     final data = _parseJson(response.body);
     final tags = data['tags'] as List<dynamic>? ?? [];
@@ -259,7 +293,7 @@ class ApiClient {
     String module,
   ) async {
     final uri = Uri.parse('$baseUrl/api/tags/folders');
-    final response = await _httpClient.post(
+    final response = await _post(
       uri,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -276,7 +310,7 @@ class ApiClient {
     final uri = Uri.parse(
       '$baseUrl/api/tags/folders?folderPath=${Uri.encodeComponent(folderPath)}&module=${Uri.encodeComponent(module)}',
     );
-    final response = await _httpClient.delete(uri);
+    final response = await _delete(uri);
     _checkResponse(response);
   }
 
@@ -287,7 +321,7 @@ class ApiClient {
   ) async {
     if (paths.isEmpty) return {};
     final uri = Uri.parse('$baseUrl/api/tags/folders/check-batch');
-    final response = await _httpClient.post(
+    final response = await _post(
       uri,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'paths': paths, 'module': module}),
@@ -314,7 +348,7 @@ class ApiClient {
         .join('&');
     final uri = Uri.parse('$baseUrl/api/history/browse?$queryString');
 
-    final response = await _httpClient.get(uri);
+    final response = await _get(uri);
     _checkResponse(response);
     final data = _parseJson(response.body);
     final history = data['history'] as List<dynamic>? ?? [];
@@ -326,7 +360,7 @@ class ApiClient {
   /// 添加浏览历史
   Future<bool> addBrowseHistory(String fullPath, String module) async {
     final uri = Uri.parse('$baseUrl/api/history/browse');
-    final response = await _httpClient.post(
+    final response = await _post(
       uri,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'fullPath': fullPath, 'module': module}),
@@ -339,7 +373,7 @@ class ApiClient {
   /// 删除浏览历史
   Future<void> deleteBrowseHistory(int id) async {
     final uri = Uri.parse('$baseUrl/api/history/browse/$id');
-    final response = await _httpClient.delete(uri);
+    final response = await _delete(uri);
     _checkResponse(response);
   }
 
@@ -355,7 +389,7 @@ class ApiClient {
     final uri = Uri.parse(
       '$baseUrl/api/history/browse/clear${queryString.isNotEmpty ? '?$queryString' : ''}',
     );
-    final response = await _httpClient.delete(uri);
+    final response = await _delete(uri);
     _checkResponse(response);
   }
 
@@ -375,7 +409,7 @@ class ApiClient {
         .join('&');
     final uri = Uri.parse('$baseUrl/api/history/download?$queryString');
 
-    final response = await _httpClient.get(uri);
+    final response = await _get(uri);
     _checkResponse(response);
     final data = _parseJson(response.body);
     final history = data['history'] as List<dynamic>? ?? [];
@@ -387,7 +421,7 @@ class ApiClient {
   /// 添加下载历史
   Future<bool> addDownloadHistory(String fullPath, String module) async {
     final uri = Uri.parse('$baseUrl/api/history/download');
-    final response = await _httpClient.post(
+    final response = await _post(
       uri,
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'fullPath': fullPath, 'module': module}),
@@ -400,7 +434,7 @@ class ApiClient {
   /// 删除下载历史
   Future<void> deleteDownloadHistory(int id) async {
     final uri = Uri.parse('$baseUrl/api/history/download/$id');
-    final response = await _httpClient.delete(uri);
+    final response = await _delete(uri);
     _checkResponse(response);
   }
 
@@ -416,7 +450,7 @@ class ApiClient {
     final uri = Uri.parse(
       '$baseUrl/api/history/download/clear${queryString.isNotEmpty ? '?$queryString' : ''}',
     );
-    final response = await _httpClient.delete(uri);
+    final response = await _delete(uri);
     _checkResponse(response);
   }
 

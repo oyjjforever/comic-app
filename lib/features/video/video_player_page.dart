@@ -61,6 +61,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     );
     _controller = VideoController(_player);
 
+    // 局域网流媒体调优：更大 demuxer 预读（起播快、拖动响应好），内存上限可控
+    final nativePlayer = _player.platform as dynamic;
+    nativePlayer.setProperty('demuxer-readahead-secs', '20');
+    nativePlayer.setProperty('demuxer-max-bytes', '64MiB');
+
     // Build the video stream URL
     final videoUrl =
         '${widget.baseUrl}/api/file?path=${Uri.encodeComponent(widget.videoFile.fullPath)}';
